@@ -1,3 +1,8 @@
-import axios from 'axios';
-const API_BASE_URL = import.meta.env.VITE_API_URL;
-export default api;
+
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
+
+export async function getPosts() {
+  const res = await fetch(`${API_BASE}/posts`);
+  if (!res.ok) throw new Error('Failed to fetch posts');
+  return res.json();
+}
