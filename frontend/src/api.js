@@ -6,3 +6,4 @@ export async function getPosts() {
   if (!res.ok) throw new Error('Failed to fetch posts');
   return res.json();
 }
+export default api;
