@@ -9,6 +9,8 @@ import Verify from './auth/Verify';
 import ForgotPassword from './auth/ForgotPassword';
 import ResetPassword from './auth/ResetPassword';
 import { AuthProvider } from './auth/AuthProvider';
+import React, { useEffect, useState } from 'react';
+import { getPosts } from './api';
 
 export default function App(){
   return (
