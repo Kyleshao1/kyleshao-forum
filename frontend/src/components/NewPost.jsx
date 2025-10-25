@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import api from '../api';
+import * as api from '../api';
 import { useAuth } from '../auth/AuthProvider';
 
 export default function NewPost(){
