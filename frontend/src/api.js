@@ -1,17 +1,24 @@
-const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
-export async function fetchPosts() {
-  const res = await fetch(`${API_BASE}/api/posts`);
-  if (!res.ok) throw new Error('Failed to fetch posts');
-  return res.json();
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
+export async function get(endpoint) {
+  const response = await fetch(`${API_URL}${endpoint}`);
+  if (!response.ok) throw new Error('Network response was not ok');
+  return response.json();
 }
 
-export async function registerUser(data) {
-  const res = await fetch(`${API_BASE}/api/auth/register`, {
+export async function post(endpoint, data) {
+  const response = await fetch(`${API_URL}${endpoint}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error('Register failed');
-  return res.json();
+  if (!response.ok) throw new Error('Network response was not ok');
+  return response.json();
 }
+export default {
+  get,
+  post,
+};
