@@ -1,10 +1,47 @@
 import { useState } from 'react';
-import * as api from '../api';
-import { useAuth } from '../auth/AuthProvider';
+import api from '../api';
 
-export default function NewPost(){
-  const { user } = useAuth();
-  const [form,setForm] = useState({ title:'', content:'' });
-  const submit = async (e) => { e.preventDefault(); if(!user) return alert('请先登录'); await api.post('/post', form, { headers: { Authorization: 'Bearer '+user.token } }); window.location.reload(); };
-  return (<div><h3>发帖</h3><form onSubmit={submit}><input placeholder='标题' value={form.title} onChange={e=>setForm({...form,title:e.target.value})} /><br/><textarea placeholder='内容 Markdown' value={form.content} onChange={e=>setForm({...form,content:e.target.value})} /><br/><button type='submit'>发布</button></form></div>);
+export default function NewPost() {
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState('');
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setLoading(true);
+    setMessage('');
+    try {
+      await api.createPost({ title, content });
+      setMessage('✅ 创建成功!');
+      setTitle('');
+      setContent('');
+    } catch {
+      setMessage('❌ 创建失败');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <input
+        type="text"
+        placeholder="标题"
+        value={title}
+        onChange={e => setTitle(e.target.value)}
+        required
+      />
+      <textarea
+        placeholder="内容"
+        value={content}
+        onChange={e => setContent(e.target.value)}
+        required
+      />
+      <button type="提交" disabled={loading}>
+        {loading ? '提交中' : 'Publish'}
+      </button>
+      {message && <p>{message}</p>}
+    </form>
+  );
 }
