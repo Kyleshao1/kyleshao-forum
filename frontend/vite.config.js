@@ -9,16 +9,6 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     server: {
       port: 5173,
-      proxy: isDev
-        ? {
-            '/api': {
-              target: API_URL,
-              changeOrigin: true,
-              secure: false,
-            },
-          }
-        : undefined,
-    },
     build: {
       outDir: 'dist',
     },
