@@ -10,6 +10,7 @@ import ForgotPassword from './auth/ForgotPassword';
 import ResetPassword from './auth/ResetPassword';
 import { AuthProvider } from './auth/AuthProvider';
 import React, { useEffect, useState } from 'react';
+import { BrowserRouter } from 'react-router-dom';
 
 export default function App(){
   return (
