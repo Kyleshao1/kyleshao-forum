@@ -161,6 +161,12 @@ async function ensureTables() {
         read_at DATETIME
       )
     `);
+    try {
+      await conn.query("ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_by_from TINYINT NOT NULL DEFAULT 0");
+    } catch {}
+    try {
+      await conn.query("ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_by_to TINYINT NOT NULL DEFAULT 0");
+    } catch {}
     await conn.query(`
       CREATE TABLE IF NOT EXISTS tickets (
         id BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -423,6 +429,22 @@ app.get("/posts/:id", auth, async (req, res) => {
   res.json({ post, replies: mappedReplies });
 });
 
+app.delete("/posts/:id", auth, async (req, res) => {
+  const postId = Number(req.params.id);
+  const user = await getUserById(req.userId);
+  const [rows] = await pool.query("SELECT * FROM posts WHERE id=?", [postId]);
+  const post = rows[0];
+  if (!post || post.deleted) return res.status(404).json({ error: "Not found" });
+  const isOwner = post.user_id === req.userId;
+  const isAdmin = user.is_admin || user.is_superadmin;
+  if (!isOwner && !isAdmin) return res.status(403).json({ error: "Forbidden" });
+  await pool.query("UPDATE posts SET deleted=1 WHERE id=?", [postId]);
+  if (isAdmin && !isOwner) {
+    await sendReportToSuperadmin(req.userId, `管理员删除帖子 #${postId}`);
+  }
+  res.json({ ok: true });
+});
+
 app.post("/posts/:id/replies", auth, async (req, res) => {
   const { content_md } = req.body || {};
   if (!content_md) return res.status(400).json({ error: "Missing content" });
@@ -435,6 +457,22 @@ app.post("/posts/:id/replies", auth, async (req, res) => {
   );
   await pool.query("UPDATE posts SET reply_count=reply_count+1 WHERE id=?", [req.params.id]);
   await addVitality(req.userId, 1);
+  res.json({ ok: true });
+});
+
+app.delete("/replies/:id", auth, async (req, res) => {
+  const replyId = Number(req.params.id);
+  const user = await getUserById(req.userId);
+  const [rows] = await pool.query("SELECT * FROM replies WHERE id=?", [replyId]);
+  const reply = rows[0];
+  if (!reply || reply.deleted) return res.status(404).json({ error: "Not found" });
+  const isOwner = reply.user_id === req.userId;
+  const isAdmin = user.is_admin || user.is_superadmin;
+  if (!isOwner && !isAdmin) return res.status(403).json({ error: "Forbidden" });
+  await pool.query("UPDATE replies SET deleted=1 WHERE id=?", [replyId]);
+  if (isAdmin && !isOwner) {
+    await sendReportToSuperadmin(req.userId, `管理员删除回复 #${replyId}`);
+  }
   res.json({ ok: true });
 });
 
@@ -550,10 +588,30 @@ app.post("/messages", auth, async (req, res) => {
 
 app.get("/messages", auth, async (req, res) => {
   const [rows] = await pool.query(
-    "SELECT m.*, u.username AS from_name FROM messages m JOIN users u ON m.from_id=u.id WHERE m.to_id=? ORDER BY m.created_at DESC LIMIT 200",
+    "SELECT m.*, u.username AS from_name FROM messages m JOIN users u ON m.from_id=u.id WHERE m.to_id=? AND (m.deleted_by_to=0 OR m.deleted_by_to IS NULL) ORDER BY m.created_at DESC LIMIT 200",
     [req.userId]
   );
   res.json(rows);
+});
+
+app.delete("/messages/:id", auth, async (req, res) => {
+  const msgId = Number(req.params.id);
+  const [rows] = await pool.query("SELECT * FROM messages WHERE id=?", [msgId]);
+  const msg = rows[0];
+  if (!msg) return res.status(404).json({ error: "Not found" });
+  if (msg.to_id !== req.userId && msg.from_id !== req.userId) return res.status(403).json({ error: "Forbidden" });
+
+  if (msg.to_id === req.userId) {
+    await pool.query("UPDATE messages SET deleted_by_to=1 WHERE id=?", [msgId]);
+  }
+  if (msg.from_id === req.userId) {
+    await pool.query("UPDATE messages SET deleted_by_from=1 WHERE id=?", [msgId]);
+  }
+  const [after] = await pool.query("SELECT deleted_by_from, deleted_by_to FROM messages WHERE id=?", [msgId]);
+  if (after[0] && after[0].deleted_by_from && after[0].deleted_by_to) {
+    await pool.query("DELETE FROM messages WHERE id=?", [msgId]);
+  }
+  res.json({ ok: true });
 });
 
 app.post("/tickets", auth, async (req, res) => {
