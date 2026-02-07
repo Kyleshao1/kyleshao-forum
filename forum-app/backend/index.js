@@ -304,8 +304,12 @@ app.post("/auth/register", async (req, res) => {
 
 app.post("/auth/login", async (req, res) => {
   const { email, password } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: "Missing fields" });
-  const [rows] = await pool.query("SELECT * FROM users WHERE email=?", [email]);
+  const identifier = (email || "").trim();
+  if (!identifier || !password) return res.status(400).json({ error: "Missing fields" });
+  let [rows] = await pool.query("SELECT * FROM users WHERE email=?", [identifier]);
+  if (!rows[0]) {
+    [rows] = await pool.query("SELECT * FROM users WHERE username=?", [identifier]);
+  }
   const user = rows[0];
   if (!user) return res.status(400).json({ error: "Invalid credentials" });
   const ok = await bcrypt.compare(password, user.pass_hash);
