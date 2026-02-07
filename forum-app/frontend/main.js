@@ -56,7 +56,9 @@ function AuthPanel({ onAuthed }) {
   const submit = async () => {
     try {
       setError("");
-      const payload = mode === "login" ? { email, password } : { email, username, password };
+      const payload = mode === "login"
+        ? { email: email.trim(), password: password }
+        : { email: email.trim(), username: username.trim(), password: password };
       const data = await apiFetch(`/auth/${mode}`, { method: "POST", body: JSON.stringify(payload) });
       localStorage.setItem("token", data.token);
       onAuthed();
@@ -68,7 +70,7 @@ function AuthPanel({ onAuthed }) {
   return React.createElement("div", { className: "card" },
     React.createElement("div", { className: "title" }, mode === "login" ? "登录" : "注册"),
     React.createElement("div", { className: "list" },
-      React.createElement("input", { placeholder: "邮箱", value: email, onChange: (e) => setEmail(e.target.value) }),
+      React.createElement("input", { placeholder: mode === "login" ? "邮箱或用户名" : "邮箱", value: email, onChange: (e) => setEmail(e.target.value) }),
       mode === "register" && React.createElement("input", { placeholder: "用户名", value: username, onChange: (e) => setUsername(e.target.value) }),
       React.createElement("input", { type: "password", placeholder: "密码", value: password, onChange: (e) => setPassword(e.target.value) }),
       error && React.createElement("div", { className: "muted" }, error),
@@ -123,13 +125,7 @@ function Feed({ go }) {
       React.createElement("div", { className: "card" },
         React.createElement("div", { className: "title" }, "API 地址"),
         React.createElement("div", { className: "muted mini" }, "当前：" + API_DEFAULT),
-        React.createElement("input", {
-          defaultValue: API_DEFAULT,
-          onBlur: (e) => {
-            localStorage.setItem("api_base", e.target.value);
-            location.reload();
-          }
-        })
+        React.createElement("div", { className: "muted mini" }, "此地址仅由站点发布者设置。")
       )
     )
   );
