@@ -357,7 +357,9 @@ function AdminPanel() {
         React.createElement("button", { className: "btn ghost", onClick: () => action("/admin/ban-pm", { user_id: Number(userId), ban_pm: true }) }, "禁私信"),
         React.createElement("button", { className: "btn ghost", onClick: () => action("/admin/ban-like", { user_id: Number(userId), ban_like: true }) }, "禁点赞"),
         React.createElement("button", { className: "btn ghost", onClick: () => action("/admin/delete-post", { post_id: Number(postId) }) }, "删帖"),
-        React.createElement("button", { className: "btn ghost", onClick: () => action("/admin/delete-reply", { reply_id: Number(replyId) }) }, "删回复")
+        React.createElement("button", { className: "btn ghost", onClick: () => action("/admin/delete-reply", { reply_id: Number(replyId) }) }, "删回复"),
+        React.createElement("button", { className: "btn ghost", onClick: () => action("/admin/promote", { user_id: Number(userId), is_admin: true }) }, "设为管理员"),
+        React.createElement("button", { className: "btn ghost", onClick: () => action("/admin/demote", { user_id: Number(userId), is_admin: false }) }, "取消管理员")
       )
     )
   );
