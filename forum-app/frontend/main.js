@@ -46,6 +46,10 @@ function Badge({ badge }) {
   return React.createElement("span", { className: "badge", style }, badge.label);
 }
 
+function AuthorLink({ id, name }) {
+  return React.createElement("a", { href: `#/user/${id}` }, name);
+}
+
 function AuthPanel({ onAuthed }) {
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
@@ -107,7 +111,8 @@ function Feed({ go }) {
           React.createElement(Badge, { badge: p.badge })
         ),
         React.createElement("div", { className: "post-meta muted mini" },
-          `作者 ${p.username} · 回复 ${p.reply_count} · 赞 ${p.like_count} · 有用 ${p.useful_count}`
+          React.createElement(AuthorLink, { id: p.user_id, name: `${p.username} (ID:${p.user_id})` }),
+          " · 回复 " + p.reply_count + " · 赞 " + p.like_count + " · 有用 " + p.useful_count
         ),
         React.createElement("div", { className: "right" },
           React.createElement("button", { className: "btn ghost", onClick: () => go(`/post/${p.id}`) }, "查看")
@@ -191,7 +196,9 @@ function PostDetail({ id, go }) {
         React.createElement("div", { className: "title" }, data.post.title),
         React.createElement(Badge, { badge: data.post.badge })
       ),
-      React.createElement("div", { className: "post-meta muted mini" }, `作者 ${data.post.username}`),
+      React.createElement("div", { className: "post-meta muted mini" },
+        React.createElement(AuthorLink, { id: data.post.user_id, name: `${data.post.username} (ID:${data.post.user_id})` })
+      ),
       React.createElement(Markdown, { content: data.post.content_md }),
       React.createElement("div", { className: "row" },
         React.createElement("button", { className: "btn ghost", onClick: () => act(`/posts/${id}/like`) }, `点赞 ${data.post.like_count}`),
@@ -208,7 +215,7 @@ function PostDetail({ id, go }) {
     ),
     data.replies.map((r) => React.createElement("div", { key: r.id, className: "card" },
       React.createElement("div", { className: "post-meta" },
-        React.createElement("strong", null, r.username),
+        React.createElement(AuthorLink, { id: r.user_id, name: `${r.username} (ID:${r.user_id})` }),
         React.createElement(Badge, { badge: r.badge })
       ),
       React.createElement(Markdown, { content: r.content_md }),
@@ -244,12 +251,39 @@ function Profile() {
   return React.createElement("div", { className: "card" },
     React.createElement("div", { className: "title" }, "个人信息"),
     React.createElement("div", { className: "list" },
+      React.createElement("div", null, `用户ID：${me.id}`),
       React.createElement("div", null, `用户名：${me.username}`),
       React.createElement("div", null, `活力值：${me.vitality}`),
       React.createElement(Badge, { badge: me.badge }),
       React.createElement("input", { placeholder: "个性签名", value: signature, onChange: (e) => setSignature(e.target.value) }),
       React.createElement("textarea", { placeholder: "个人简介", value: bio, onChange: (e) => setBio(e.target.value) }),
       React.createElement("button", { className: "btn", onClick: save }, "保存")
+    )
+  );
+}
+
+function UserProfile({ id }) {
+  const [user, setUser] = useState(null);
+
+  const load = async () => {
+    const data = await apiFetch(`/users/${id}`);
+    setUser(data);
+  };
+
+  useEffect(() => { load(); }, [id]);
+
+  if (!user) return React.createElement("div", { className: "card" }, "加载中...");
+  return React.createElement("div", { className: "card" },
+    React.createElement("div", { className: "title" }, "用户主页"),
+    React.createElement("div", { className: "list" },
+      React.createElement("div", null, `用户ID：${user.id}`),
+      React.createElement("div", null, `用户名：${user.username}`),
+      React.createElement("div", null, `活力值：${user.vitality}`),
+      React.createElement(Badge, { badge: user.badge }),
+      React.createElement("div", null, `关注：${user.following} · 粉丝：${user.followers}`),
+      React.createElement("div", null, `发帖：${user.posts} · 回复：${user.replies} · 被标记有用：${user.useful}`),
+      React.createElement("div", null, `个性签名：${user.signature || ""}`),
+      React.createElement("div", null, `个人简介：${user.bio || ""}`)
     )
   );
 }
@@ -275,7 +309,10 @@ function Messages() {
   return React.createElement("div", { className: "grid" },
     React.createElement("div", { className: "list" },
       list.map((m) => React.createElement("div", { key: m.id, className: "card" },
-        React.createElement("div", { className: "muted mini" }, `来自 ${m.from_name}`),
+        React.createElement("div", { className: "muted mini" },
+          "来自 ",
+          React.createElement(AuthorLink, { id: m.from_id, name: `${m.from_name} (ID:${m.from_id})` })
+        ),
         React.createElement(Markdown, { content: m.content_md })
       ))
     ),
@@ -294,18 +331,32 @@ function Tickets() {
   const [list, setList] = useState([]);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
+  const [me, setMe] = useState(null);
 
   const load = async () => {
     const data = await apiFetch("/tickets");
     setList(data);
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    apiFetch("/me").then(setMe).catch(() => {});
+  }, []);
 
   const submit = async () => {
     await apiFetch("/tickets", { method: "POST", body: JSON.stringify({ title, content_md: content }) });
     setTitle("");
     setContent("");
+    load();
+  };
+
+  const setStatus = async (id, status) => {
+    await apiFetch(`/tickets/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
+    load();
+  };
+
+  const deleteTicket = async (id) => {
+    await apiFetch(`/tickets/${id}`, { method: "DELETE" });
     load();
   };
 
@@ -316,7 +367,19 @@ function Tickets() {
           React.createElement("strong", null, t.title),
           React.createElement("span", { className: "muted mini" }, t.status)
         ),
-        React.createElement(Markdown, { content: t.content_md })
+        React.createElement("div", { className: "muted mini" },
+          "工单ID: " + t.id + " · 作者 ",
+          t.username
+            ? React.createElement(AuthorLink, { id: t.user_id, name: `${t.username} (ID:${t.user_id})` })
+            : React.createElement(AuthorLink, { id: t.user_id, name: `ID:${t.user_id}` })
+        ),
+        React.createElement(Markdown, { content: t.content_md }),
+        me && me.is_superadmin && React.createElement("div", { className: "row" },
+          React.createElement("button", { className: "btn ghost", onClick: () => setStatus(t.id, "pending") }, "挂起"),
+          React.createElement("button", { className: "btn ghost", onClick: () => setStatus(t.id, "closed") }, "关闭"),
+          React.createElement("button", { className: "btn ghost", onClick: () => setStatus(t.id, "done") }, "完成"),
+          React.createElement("button", { className: "btn ghost", onClick: () => deleteTicket(t.id) }, "删除")
+        )
       ))
     ),
     React.createElement("div", { className: "card" },
@@ -399,6 +462,10 @@ function App() {
   if (route.startsWith("/post/")) {
     const id = route.split("/")[2];
     return React.createElement(PostDetail, { id, go });
+  }
+  if (route.startsWith("/user/")) {
+    const id = route.split("/")[2];
+    return React.createElement(UserProfile, { id });
   }
   if (route === "/new") return React.createElement(NewPost, { go });
   if (route === "/me") return React.createElement(Profile);
