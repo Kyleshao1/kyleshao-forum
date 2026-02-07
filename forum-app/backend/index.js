@@ -4,6 +4,8 @@ import dotenv from "dotenv";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import mysql from "mysql2/promise";
+import crypto from "crypto";
+import nodemailer from "nodemailer";
 
 dotenv.config();
 
@@ -18,11 +20,33 @@ const {
   DB_PORT = 4000,
   DB_USER,
   DB_PASSWORD,
-  DB_NAME
+  DB_NAME,
+  SMTP_HOST,
+  SMTP_PORT = 587,
+  SMTP_USER,
+  SMTP_PASS,
+  SMTP_FROM
 } = process.env;
 
 if (!DB_HOST || !DB_USER || !DB_PASSWORD || !DB_NAME) {
   console.warn("Missing DB env vars. Set DB_HOST, DB_USER, DB_PASSWORD, DB_NAME.");
+}
+
+const mailer = SMTP_HOST
+  ? nodemailer.createTransport({
+      host: SMTP_HOST,
+      port: Number(SMTP_PORT),
+      secure: Number(SMTP_PORT) === 465,
+      auth: SMTP_USER && SMTP_PASS ? { user: SMTP_USER, pass: SMTP_PASS } : undefined
+    })
+  : null;
+
+async function sendResetEmail(to, token) {
+  if (!mailer) return;
+  const from = SMTP_FROM || SMTP_USER || "no-reply@example.com";
+  const subject = "论坛密码重置码";
+  const text = `你的重置码：${token}\n有效期 1 小时。`;
+  await mailer.sendMail({ from, to, subject, text });
 }
 
 const pool = mysql.createPool({
@@ -187,6 +211,16 @@ async function ensureTables() {
         created_at DATETIME NOT NULL
       )
     `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        user_id BIGINT NOT NULL,
+        token VARCHAR(128) NOT NULL,
+        expires_at DATETIME NOT NULL,
+        created_at DATETIME NOT NULL,
+        UNIQUE KEY uniq_token (token)
+      )
+    `);
   } finally {
     conn.release();
   }
@@ -325,6 +359,49 @@ app.post("/auth/login", async (req, res) => {
   res.json({ token });
 });
 
+app.post("/auth/forgot", async (req, res) => {
+  const { email } = req.body || {};
+  const identifier = (email || "").trim();
+  if (!identifier) return res.status(400).json({ error: "Missing email" });
+  const [rows] = await pool.query("SELECT * FROM users WHERE email=?", [identifier]);
+  const user = rows[0];
+  if (!user) return res.status(404).json({ error: "User not found" });
+  const token = crypto.randomBytes(24).toString("hex");
+  const expires = new Date(Date.now() + 60 * 60 * 1000);
+  await pool.query(
+    "INSERT INTO password_reset_tokens (user_id, token, expires_at, created_at) VALUES (?,?,?,?)",
+    [user.id, token, expires.toISOString().slice(0, 19).replace("T", " "), nowSql()]
+  );
+  if (mailer) {
+    try {
+      await sendResetEmail(user.email, token);
+    } catch (e) {
+      return res.status(500).json({ error: "Failed to send email" });
+    }
+  }
+  res.json({ ok: true, expires_at: expires.toISOString(), email_sent: !!mailer, token: mailer ? undefined : token });
+});
+
+app.post("/auth/reset", async (req, res) => {
+  const { email, token, new_password } = req.body || {};
+  const identifier = (email || "").trim();
+  if (!identifier || !token || !new_password) return res.status(400).json({ error: "Missing fields" });
+  const [users] = await pool.query("SELECT * FROM users WHERE email=?", [identifier]);
+  const user = users[0];
+  if (!user) return res.status(404).json({ error: "User not found" });
+  const [tokens] = await pool.query(
+    "SELECT * FROM password_reset_tokens WHERE user_id=? AND token=? ORDER BY created_at DESC LIMIT 1",
+    [user.id, token]
+  );
+  const row = tokens[0];
+  if (!row) return res.status(400).json({ error: "Invalid token" });
+  if (new Date(row.expires_at) < new Date()) return res.status(400).json({ error: "Token expired" });
+  const pass_hash = await bcrypt.hash(new_password, 10);
+  await pool.query("UPDATE users SET pass_hash=? WHERE id=?", [pass_hash, user.id]);
+  await pool.query("DELETE FROM password_reset_tokens WHERE user_id=?", [user.id]);
+  res.json({ ok: true });
+});
+
 app.get("/me", auth, async (req, res) => {
   let user = await getUserById(req.userId);
   if (!user) return res.status(404).json({ error: "Not found" });
@@ -427,6 +504,26 @@ app.get("/posts/:id", auth, async (req, res) => {
     badge: badgeFromVitality(r.is_admin || r.is_superadmin ? 9999 : r.vitality, r.is_admin || r.is_superadmin)
   }));
   res.json({ post, replies: mappedReplies });
+});
+
+app.patch("/posts/:id", auth, async (req, res) => {
+  const postId = Number(req.params.id);
+  const { title, content_md } = req.body || {};
+  if (!title || !content_md) return res.status(400).json({ error: "Missing fields" });
+  const user = await getUserById(req.userId);
+  const [rows] = await pool.query("SELECT * FROM posts WHERE id=?", [postId]);
+  const post = rows[0];
+  if (!post || post.deleted) return res.status(404).json({ error: "Not found" });
+  const isOwner = post.user_id === req.userId;
+  const isAdmin = user.is_admin || user.is_superadmin;
+  if (!isOwner && !isAdmin) return res.status(403).json({ error: "Forbidden" });
+  await pool.query("UPDATE posts SET title=?, content_md=?, updated_at=? WHERE id=?", [
+    title,
+    content_md,
+    nowSql(),
+    postId
+  ]);
+  res.json({ ok: true });
 });
 
 app.delete("/posts/:id", auth, async (req, res) => {
@@ -640,6 +737,22 @@ app.patch("/tickets/:id/status", auth, requireSuperadmin, async (req, res) => {
   const allowed = ["open", "pending", "closed", "done"];
   if (!allowed.includes(status)) return res.status(400).json({ error: "Invalid status" });
   await pool.query("UPDATE tickets SET status=?, updated_at=? WHERE id=?", [status, nowSql(), req.params.id]);
+  res.json({ ok: true });
+});
+
+app.patch("/tickets/:id", auth, async (req, res) => {
+  const { title, content_md } = req.body || {};
+  if (!title || !content_md) return res.status(400).json({ error: "Missing fields" });
+  const [rows] = await pool.query("SELECT * FROM tickets WHERE id=?", [req.params.id]);
+  const ticket = rows[0];
+  if (!ticket) return res.status(404).json({ error: "Not found" });
+  if (ticket.user_id !== req.userId) return res.status(403).json({ error: "Forbidden" });
+  await pool.query("UPDATE tickets SET title=?, content_md=?, updated_at=? WHERE id=?", [
+    title,
+    content_md,
+    nowSql(),
+    req.params.id
+  ]);
   res.json({ ok: true });
 });
 
