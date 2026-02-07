@@ -56,10 +56,25 @@ function AuthPanel({ onAuthed }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [resetToken, setResetToken] = useState("");
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetInfo, setResetInfo] = useState("");
 
   const submit = async () => {
     try {
       setError("");
+      if (mode === "forgot") {
+        const data = await apiFetch("/auth/forgot", { method: "POST", body: JSON.stringify({ email: email.trim() }) });
+        if (data.email_sent) {
+          setResetInfo("重置码已发送到邮箱，请查收。");
+        } else if (data.token) {
+          setResetInfo(`重置码已生成：${data.token}`);
+          setResetToken(data.token);
+        } else {
+          setResetInfo("重置码已生成。");
+        }
+        return;
+      }
       const payload = mode === "login"
         ? { email: email.trim(), password: password }
         : { email: email.trim(), username: username.trim(), password: password };
@@ -71,17 +86,47 @@ function AuthPanel({ onAuthed }) {
     }
   };
 
+  const doReset = async () => {
+    try {
+      setError("");
+      await apiFetch("/auth/reset", {
+        method: "POST",
+        body: JSON.stringify({
+          email: email.trim(),
+          token: resetToken.trim(),
+          new_password: resetPassword
+        })
+      });
+      setResetInfo("密码已重置，请登录");
+      setMode("login");
+      setResetPassword("");
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
   return React.createElement("div", { className: "card" },
-    React.createElement("div", { className: "title" }, mode === "login" ? "登录" : "注册"),
+    React.createElement("div", { className: "title" },
+      mode === "login" ? "登录" : mode === "register" ? "注册" : "忘记密码"
+    ),
     React.createElement("div", { className: "list" },
       React.createElement("input", { placeholder: mode === "login" ? "邮箱或用户名" : "邮箱", value: email, onChange: (e) => setEmail(e.target.value) }),
       mode === "register" && React.createElement("input", { placeholder: "用户名", value: username, onChange: (e) => setUsername(e.target.value) }),
-      React.createElement("input", { type: "password", placeholder: "密码", value: password, onChange: (e) => setPassword(e.target.value) }),
+      mode !== "forgot" && React.createElement("input", { type: "password", placeholder: "密码", value: password, onChange: (e) => setPassword(e.target.value) }),
+      mode === "forgot" && React.createElement("input", { placeholder: "重置码", value: resetToken, onChange: (e) => setResetToken(e.target.value) }),
+      mode === "forgot" && React.createElement("input", { type: "password", placeholder: "新密码", value: resetPassword, onChange: (e) => setResetPassword(e.target.value) }),
+      resetInfo && React.createElement("div", { className: "muted" }, resetInfo),
       error && React.createElement("div", { className: "muted" }, error),
-      React.createElement("button", { className: "btn", onClick: submit }, mode === "login" ? "登录" : "注册"),
+      mode === "forgot"
+        ? React.createElement("div", { className: "row" },
+            React.createElement("button", { className: "btn ghost", onClick: submit }, "获取重置码"),
+            React.createElement("button", { className: "btn", onClick: doReset }, "重置密码")
+          )
+        : React.createElement("button", { className: "btn", onClick: submit }, mode === "login" ? "登录" : "注册"),
       React.createElement("button", { className: "btn ghost", onClick: () => setMode(mode === "login" ? "register" : "login") },
         mode === "login" ? "没有账号？注册" : "已有账号？登录"
-      )
+      ),
+      React.createElement("button", { className: "btn ghost", onClick: () => setMode("forgot") }, "忘记密码")
     )
   );
 }
@@ -165,6 +210,9 @@ function PostDetail({ id, go, me }) {
   const [data, setData] = useState(null);
   const [reply, setReply] = useState("");
   const [error, setError] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
+  const [editContent, setEditContent] = useState("");
 
   const load = async () => {
     try {
@@ -177,6 +225,13 @@ function PostDetail({ id, go, me }) {
   };
 
   useEffect(() => { load(); }, [id]);
+
+  useEffect(() => {
+    if (data) {
+      setEditTitle(data.post.title);
+      setEditContent(data.post.content_md);
+    }
+  }, [data]);
 
   const act = async (path) => {
     await apiFetch(path, { method: "POST" });
@@ -199,8 +254,15 @@ function PostDetail({ id, go, me }) {
     load();
   };
 
+  const saveEdit = async () => {
+    await apiFetch(`/posts/${id}`, { method: "PATCH", body: JSON.stringify({ title: editTitle, content_md: editContent }) });
+    setEditing(false);
+    load();
+  };
+
   if (!data) return React.createElement("div", { className: "card" }, error || "加载中...");
   const canDeletePost = me && (me.id === data.post.user_id || me.is_admin || me.is_superadmin);
+  const canEditPost = canDeletePost;
   return React.createElement("div", { className: "list" },
     React.createElement("div", { className: "card" },
       React.createElement("div", { className: "row" },
@@ -210,11 +272,21 @@ function PostDetail({ id, go, me }) {
       React.createElement("div", { className: "post-meta muted mini" },
         React.createElement(AuthorLink, { id: data.post.user_id, name: `${data.post.username} (ID:${data.post.user_id})` })
       ),
-      React.createElement(Markdown, { content: data.post.content_md }),
+      editing
+        ? React.createElement("div", { className: "list" },
+            React.createElement("input", { value: editTitle, onChange: (e) => setEditTitle(e.target.value) }),
+            React.createElement("textarea", { value: editContent, onChange: (e) => setEditContent(e.target.value) }),
+            React.createElement("div", { className: "row" },
+              React.createElement("button", { className: "btn", onClick: saveEdit }, "保存修改"),
+              React.createElement("button", { className: "btn ghost", onClick: () => setEditing(false) }, "取消")
+            )
+          )
+        : React.createElement(Markdown, { content: data.post.content_md }),
       React.createElement("div", { className: "row" },
         React.createElement("button", { className: "btn ghost", onClick: () => act(`/posts/${id}/like`) }, `点赞 ${data.post.like_count}`),
         React.createElement("button", { className: "btn ghost", onClick: () => act(`/posts/${id}/useful`) }, `有用 ${data.post.useful_count}`),
         React.createElement("button", { className: "btn ghost", onClick: () => act(`/posts/${id}/downvote`) }, `点踩 ${data.post.downvote_count}`),
+        canEditPost && !editing && React.createElement("button", { className: "btn ghost", onClick: () => setEditing(true) }, "编辑帖子"),
         canDeletePost && React.createElement("button", { className: "btn ghost", onClick: deletePost }, "删除帖子")
       )
     ),
@@ -356,6 +428,7 @@ function Tickets() {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [me, setMe] = useState(null);
+  const [editingId, setEditingId] = useState(null);
 
   const load = async () => {
     const data = await apiFetch("/tickets");
@@ -368,7 +441,12 @@ function Tickets() {
   }, []);
 
   const submit = async () => {
-    await apiFetch("/tickets", { method: "POST", body: JSON.stringify({ title, content_md: content }) });
+    if (editingId) {
+      await apiFetch(`/tickets/${editingId}`, { method: "PATCH", body: JSON.stringify({ title, content_md: content }) });
+      setEditingId(null);
+    } else {
+      await apiFetch("/tickets", { method: "POST", body: JSON.stringify({ title, content_md: content }) });
+    }
     setTitle("");
     setContent("");
     load();
@@ -398,6 +476,16 @@ function Tickets() {
             : React.createElement(AuthorLink, { id: t.user_id, name: `ID:${t.user_id}` })
         ),
         React.createElement(Markdown, { content: t.content_md }),
+        me && me.id === t.user_id && React.createElement("div", { className: "row" },
+          React.createElement("button", {
+            className: "btn ghost",
+            onClick: () => {
+              setEditingId(t.id);
+              setTitle(t.title);
+              setContent(t.content_md);
+            }
+          }, "编辑")
+        ),
         me && me.is_superadmin && React.createElement("div", { className: "row" },
           React.createElement("button", { className: "btn ghost", onClick: () => setStatus(t.id, "pending") }, "挂起"),
           React.createElement("button", { className: "btn ghost", onClick: () => setStatus(t.id, "closed") }, "关闭"),
@@ -407,11 +495,21 @@ function Tickets() {
       ))
     ),
     React.createElement("div", { className: "card" },
-      React.createElement("div", { className: "title" }, "提交工单"),
+      React.createElement("div", { className: "title" }, editingId ? "编辑工单" : "提交工单"),
       React.createElement("div", { className: "list" },
         React.createElement("input", { placeholder: "标题", value: title, onChange: (e) => setTitle(e.target.value) }),
         React.createElement("textarea", { placeholder: "问题描述", value: content, onChange: (e) => setContent(e.target.value) }),
-        React.createElement("button", { className: "btn", onClick: submit }, "提交")
+        React.createElement("div", { className: "row" },
+          React.createElement("button", { className: "btn", onClick: submit }, editingId ? "保存" : "提交"),
+          editingId && React.createElement("button", {
+            className: "btn ghost",
+            onClick: () => {
+              setEditingId(null);
+              setTitle("");
+              setContent("");
+            }
+          }, "取消")
+        )
       )
     )
   );
