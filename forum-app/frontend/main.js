@@ -161,7 +161,7 @@ function NewPost({ go }) {
   );
 }
 
-function PostDetail({ id, go }) {
+function PostDetail({ id, go, me }) {
   const [data, setData] = useState(null);
   const [reply, setReply] = useState("");
   const [error, setError] = useState("");
@@ -189,7 +189,18 @@ function PostDetail({ id, go }) {
     load();
   };
 
+  const deletePost = async () => {
+    await apiFetch(`/posts/${id}`, { method: "DELETE" });
+    go("/");
+  };
+
+  const deleteReply = async (replyId) => {
+    await apiFetch(`/replies/${replyId}`, { method: "DELETE" });
+    load();
+  };
+
   if (!data) return React.createElement("div", { className: "card" }, error || "加载中...");
+  const canDeletePost = me && (me.id === data.post.user_id || me.is_admin || me.is_superadmin);
   return React.createElement("div", { className: "list" },
     React.createElement("div", { className: "card" },
       React.createElement("div", { className: "row" },
@@ -203,7 +214,8 @@ function PostDetail({ id, go }) {
       React.createElement("div", { className: "row" },
         React.createElement("button", { className: "btn ghost", onClick: () => act(`/posts/${id}/like`) }, `点赞 ${data.post.like_count}`),
         React.createElement("button", { className: "btn ghost", onClick: () => act(`/posts/${id}/useful`) }, `有用 ${data.post.useful_count}`),
-        React.createElement("button", { className: "btn ghost", onClick: () => act(`/posts/${id}/downvote`) }, `点踩 ${data.post.downvote_count}`)
+        React.createElement("button", { className: "btn ghost", onClick: () => act(`/posts/${id}/downvote`) }, `点踩 ${data.post.downvote_count}`),
+        canDeletePost && React.createElement("button", { className: "btn ghost", onClick: deletePost }, "删除帖子")
       )
     ),
     React.createElement("div", { className: "card" },
@@ -213,7 +225,9 @@ function PostDetail({ id, go }) {
         React.createElement("button", { className: "btn", onClick: submitReply }, "发送回复")
       )
     ),
-    data.replies.map((r) => React.createElement("div", { key: r.id, className: "card" },
+    data.replies.map((r) => {
+      const canDeleteReply = me && (me.id === r.user_id || me.is_admin || me.is_superadmin);
+      return React.createElement("div", { key: r.id, className: "card" },
       React.createElement("div", { className: "post-meta" },
         React.createElement(AuthorLink, { id: r.user_id, name: `${r.username} (ID:${r.user_id})` }),
         React.createElement(Badge, { badge: r.badge })
@@ -222,9 +236,11 @@ function PostDetail({ id, go }) {
       React.createElement("div", { className: "row" },
         React.createElement("button", { className: "btn ghost", onClick: () => act(`/replies/${r.id}/like`) }, `点赞 ${r.like_count}`),
         React.createElement("button", { className: "btn ghost", onClick: () => act(`/replies/${r.id}/useful`) }, `有用 ${r.useful_count}`),
-        React.createElement("button", { className: "btn ghost", onClick: () => act(`/replies/${r.id}/downvote`) }, `点踩 ${r.downvote_count}`)
+        React.createElement("button", { className: "btn ghost", onClick: () => act(`/replies/${r.id}/downvote`) }, `点踩 ${r.downvote_count}`),
+        canDeleteReply && React.createElement("button", { className: "btn ghost", onClick: () => deleteReply(r.id) }, "删除回复")
       )
-    ))
+    );
+    })
   );
 }
 
@@ -306,6 +322,11 @@ function Messages() {
     load();
   };
 
+  const remove = async (id) => {
+    await apiFetch(`/messages/${id}`, { method: "DELETE" });
+    load();
+  };
+
   return React.createElement("div", { className: "grid" },
     React.createElement("div", { className: "list" },
       list.map((m) => React.createElement("div", { key: m.id, className: "card" },
@@ -313,7 +334,10 @@ function Messages() {
           "来自 ",
           React.createElement(AuthorLink, { id: m.from_id, name: `${m.from_name} (ID:${m.from_id})` })
         ),
-        React.createElement(Markdown, { content: m.content_md })
+        React.createElement(Markdown, { content: m.content_md }),
+        React.createElement("div", { className: "row" },
+          React.createElement("button", { className: "btn ghost", onClick: () => remove(m.id) }, "删除私信")
+        )
       ))
     ),
     React.createElement("div", { className: "card" },
@@ -431,6 +455,7 @@ function AdminPanel() {
 function App() {
   const [route, go] = useHashRoute();
   const [authed, setAuthed] = useState(!!localStorage.getItem("token"));
+  const [me, setMe] = useState(null);
 
   useEffect(() => {
     const logoutBtn = document.getElementById("logout");
@@ -446,14 +471,17 @@ function App() {
     const pill = document.getElementById("user-pill");
     if (!authed) {
       pill.textContent = "未登录";
+      setMe(null);
       return;
     }
-    apiFetch("/me").then((me) => {
-      pill.textContent = `${me.username} · ${me.badge.label}`;
+    apiFetch("/me").then((data) => {
+      setMe(data);
+      pill.textContent = `${data.username} · ${data.badge.label}`;
     }).catch(() => {
       pill.textContent = "未登录";
       localStorage.removeItem("token");
       setAuthed(false);
+      setMe(null);
     });
   }, [authed]);
 
@@ -461,7 +489,7 @@ function App() {
 
   if (route.startsWith("/post/")) {
     const id = route.split("/")[2];
-    return React.createElement(PostDetail, { id, go });
+    return React.createElement(PostDetail, { id, go, me });
   }
   if (route.startsWith("/user/")) {
     const id = route.split("/")[2];
