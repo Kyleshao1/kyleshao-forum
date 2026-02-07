@@ -331,7 +331,9 @@ app.get("/me", auth, async (req, res) => {
     bio: user.bio,
     signature: user.signature,
     vitality: user.is_admin || user.is_superadmin ? "∞" : user.vitality,
-    badge
+    badge,
+    is_admin: !!user.is_admin,
+    is_superadmin: !!user.is_superadmin
   });
 });
 
@@ -580,6 +582,11 @@ app.patch("/tickets/:id/status", auth, requireSuperadmin, async (req, res) => {
   const allowed = ["open", "pending", "closed", "done"];
   if (!allowed.includes(status)) return res.status(400).json({ error: "Invalid status" });
   await pool.query("UPDATE tickets SET status=?, updated_at=? WHERE id=?", [status, nowSql(), req.params.id]);
+  res.json({ ok: true });
+});
+
+app.delete("/tickets/:id", auth, requireSuperadmin, async (req, res) => {
+  await pool.query("DELETE FROM tickets WHERE id=?", [req.params.id]);
   res.json({ ok: true });
 });
 
