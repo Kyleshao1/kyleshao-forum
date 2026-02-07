@@ -33,7 +33,10 @@ const pool = mysql.createPool({
   database: DB_NAME,
   waitForConnections: true,
   connectionLimit: 10,
-  queueLimit: 0
+  queueLimit: 0,
+  ssl: {
+    rejectUnauthorized: true
+  }
 });
 
 const nowSql = () => new Date().toISOString().slice(0, 19).replace("T", " ");
