@@ -4,7 +4,7 @@ import { createRoot } from "https://esm.sh/react-dom@18/client";
 const rootEl = document.getElementById("root");
 const root = createRoot(rootEl);
 
-const API_DEFAULT = localStorage.getItem("api_base") || "http://localhost:4000";
+const API_DEFAULT = window.__API_BASE__ || "http://localhost:4000";
 
 function useHashRoute() {
   const [route, setRoute] = useState(location.hash.slice(1) || "/");
