@@ -134,6 +134,7 @@ function AuthPanel({ onAuthed }) {
 function Feed({ go }) {
   const [posts, setPosts] = useState([]);
   const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
 
   const load = async () => {
     try {
@@ -143,6 +144,13 @@ function Feed({ go }) {
     } catch (e) {
       setError(e.message);
     }
+  };
+
+  const search = async () => {
+    const q = query.trim();
+    if (!q) return load();
+    const data = await apiFetch(`/posts/search?q=${encodeURIComponent(q)}`);
+    setPosts(data);
   };
 
   useEffect(() => { load(); }, []);
@@ -170,6 +178,16 @@ function Feed({ go }) {
         React.createElement("div", { className: "list" },
           React.createElement("button", { className: "btn", onClick: () => go("/new") }, "发帖"),
           React.createElement("button", { className: "btn ghost", onClick: load }, "刷新")
+        )
+      ),
+      React.createElement("div", { className: "card" },
+        React.createElement("div", { className: "title" }, "搜索帖子"),
+        React.createElement("div", { className: "list" },
+          React.createElement("input", { placeholder: "关键词", value: query, onChange: (e) => setQuery(e.target.value) }),
+          React.createElement("div", { className: "row" },
+            React.createElement("button", { className: "btn", onClick: search }, "搜索"),
+            React.createElement("button", { className: "btn ghost", onClick: load }, "清空")
+          )
         )
       ),
       React.createElement("div", { className: "card" },
@@ -515,6 +533,7 @@ function Tickets() {
   const [content, setContent] = useState("");
   const [me, setMe] = useState(null);
   const [editingId, setEditingId] = useState(null);
+  const [query, setQuery] = useState("");
 
   const load = async () => {
     const data = await apiFetch("/tickets");
@@ -538,6 +557,13 @@ function Tickets() {
     load();
   };
 
+  const search = async () => {
+    const q = query.trim();
+    if (!q) return load();
+    const data = await apiFetch(`/tickets/search?q=${encodeURIComponent(q)}`);
+    setList(data);
+  };
+
   const setStatus = async (id, status) => {
     await apiFetch(`/tickets/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
     load();
@@ -550,6 +576,16 @@ function Tickets() {
 
   return React.createElement("div", { className: "grid" },
     React.createElement("div", { className: "list" },
+      React.createElement("div", { className: "card" },
+        React.createElement("div", { className: "title" }, "搜索工单"),
+        React.createElement("div", { className: "list" },
+          React.createElement("input", { placeholder: "关键词", value: query, onChange: (e) => setQuery(e.target.value) }),
+          React.createElement("div", { className: "row" },
+            React.createElement("button", { className: "btn", onClick: search }, "搜索"),
+            React.createElement("button", { className: "btn ghost", onClick: load }, "清空")
+          )
+        )
+      ),
       list.map((t) => React.createElement("div", { key: t.id, className: "card" },
         React.createElement("div", { className: "row" },
           React.createElement("strong", null, t.title),
