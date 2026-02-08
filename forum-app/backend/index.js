@@ -42,7 +42,10 @@ const mailer = SMTP_HOST
       host: SMTP_HOST,
       port: Number(SMTP_PORT),
       secure: Number(SMTP_PORT) === 465,
-      auth: SMTP_USER && SMTP_PASS ? { user: SMTP_USER, pass: SMTP_PASS } : undefined
+      auth: SMTP_USER && SMTP_PASS ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
+      socketTimeout: 8000
     })
   : null;
 
@@ -400,11 +403,9 @@ app.post("/auth/forgot", async (req, res) => {
     [user.id, token, expires.toISOString().slice(0, 19).replace("T", " "), nowSql()]
   );
   if (mailer) {
-    try {
-      await sendResetEmail(user.email, token);
-    } catch (e) {
-      return res.status(500).json({ error: "Failed to send email" });
-    }
+    sendResetEmail(user.email, token).catch((e) => {
+      console.error("Reset email failed:", e?.message || e);
+    });
   }
   res.json({ ok: true, expires_at: expires.toISOString(), email_sent: !!mailer, token: mailer ? undefined : token });
 });
