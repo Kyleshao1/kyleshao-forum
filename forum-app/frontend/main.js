@@ -221,6 +221,7 @@ function PostDetail({ id, go, me }) {
   const [editing, setEditing] = useState(false);
   const [editTitle, setEditTitle] = useState("");
   const [editContent, setEditContent] = useState("");
+  const [editPreview, setEditPreview] = useState(false);
   const [replyPreview, setReplyPreview] = useState(false);
 
   const load = async () => {
@@ -293,8 +294,13 @@ function PostDetail({ id, go, me }) {
             React.createElement("input", { value: editTitle, onChange: (e) => setEditTitle(e.target.value) }),
             React.createElement("textarea", { value: editContent, onChange: (e) => setEditContent(e.target.value) }),
             React.createElement("div", { className: "row" },
+              React.createElement("button", { className: "btn ghost", onClick: () => setEditPreview(!editPreview) }, editPreview ? "关闭预览" : "预览"),
               React.createElement("button", { className: "btn", onClick: saveEdit }, "保存修改"),
               React.createElement("button", { className: "btn ghost", onClick: () => setEditing(false) }, "取消")
+            ),
+            editPreview && React.createElement("div", { className: "card" },
+              React.createElement("div", { className: "muted mini" }, "预览"),
+              React.createElement(Markdown, { content: editContent })
             )
           )
         : React.createElement(Markdown, { content: data.post.content_md }),
