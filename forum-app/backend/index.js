@@ -546,6 +546,21 @@ app.get("/posts", auth, async (req, res) => {
   res.json(mapped);
 });
 
+app.get("/posts/search", auth, async (req, res) => {
+  const q = (req.query.q || "").trim();
+  if (!q) return res.json([]);
+  const like = `%${q}%`;
+  const [rows] = await pool.query(
+    "SELECT p.*, u.username, u.is_admin, u.is_superadmin, u.vitality FROM posts p JOIN users u ON p.user_id=u.id WHERE p.deleted=0 AND (p.title LIKE ? OR p.content_md LIKE ?) ORDER BY p.pinned DESC, p.created_at DESC LIMIT 200",
+    [like, like]
+  );
+  const mapped = rows.map((r) => ({
+    ...r,
+    badge: badgeFromVitality(r.is_admin || r.is_superadmin ? 9999 : r.vitality, r.is_admin || r.is_superadmin)
+  }));
+  res.json(mapped);
+});
+
 app.get("/posts/:id", auth, async (req, res) => {
   const [posts] = await pool.query(
     "SELECT p.*, u.username, u.is_admin, u.is_superadmin, u.vitality FROM posts p JOIN users u ON p.user_id=u.id WHERE p.id=?",
@@ -667,12 +682,25 @@ app.post("/posts/:id/like", auth, async (req, res) => {
   if (user.ban_like) return res.status(403).json({ error: "Likes disabled" });
   const postId = req.params.id;
   const [exists] = await pool.query("SELECT 1 FROM post_likes WHERE user_id=? AND post_id=?", [req.userId, postId]);
-  if (exists[0]) return res.json({ ok: true });
+  if (exists[0]) {
+    await pool.query("DELETE FROM post_likes WHERE user_id=? AND post_id=?", [req.userId, postId]);
+    await pool.query("UPDATE posts SET like_count=GREATEST(like_count-1,0) WHERE id=?", [postId]);
+    const [postRows] = await pool.query("SELECT user_id FROM posts WHERE id=?", [postId]);
+    if (postRows[0]) await addVitality(postRows[0].user_id, -2);
+    return res.json({ ok: true, liked: false });
+  }
+  const [down] = await pool.query("SELECT 1 FROM post_downvotes WHERE user_id=? AND post_id=?", [req.userId, postId]);
+  if (down[0]) {
+    await pool.query("DELETE FROM post_downvotes WHERE user_id=? AND post_id=?", [req.userId, postId]);
+    await pool.query("UPDATE posts SET downvote_count=GREATEST(downvote_count-1,0) WHERE id=?", [postId]);
+    const [postRows] = await pool.query("SELECT user_id FROM posts WHERE id=?", [postId]);
+    if (postRows[0]) await addVitality(postRows[0].user_id, 2);
+  }
   await pool.query("INSERT INTO post_likes (user_id,post_id,created_at) VALUES (?,?,?)", [req.userId, postId, nowSql()]);
   await pool.query("UPDATE posts SET like_count=like_count+1 WHERE id=?", [postId]);
   const [postRows] = await pool.query("SELECT user_id FROM posts WHERE id=?", [postId]);
   if (postRows[0]) await addVitality(postRows[0].user_id, 2);
-  res.json({ ok: true });
+  res.json({ ok: true, liked: true });
 });
 
 app.post("/posts/:id/unlike", auth, async (req, res) => {
@@ -687,23 +715,42 @@ app.post("/posts/:id/unlike", auth, async (req, res) => {
 app.post("/posts/:id/useful", auth, async (req, res) => {
   const postId = req.params.id;
   const [exists] = await pool.query("SELECT 1 FROM post_useful WHERE user_id=? AND post_id=?", [req.userId, postId]);
-  if (exists[0]) return res.json({ ok: true });
+  if (exists[0]) {
+    await pool.query("DELETE FROM post_useful WHERE user_id=? AND post_id=?", [req.userId, postId]);
+    await pool.query("UPDATE posts SET useful_count=GREATEST(useful_count-1,0) WHERE id=?", [postId]);
+    const [postRows] = await pool.query("SELECT user_id FROM posts WHERE id=?", [postId]);
+    if (postRows[0]) await addVitality(postRows[0].user_id, -5);
+    return res.json({ ok: true, useful: false });
+  }
   await pool.query("INSERT INTO post_useful (user_id,post_id,created_at) VALUES (?,?,?)", [req.userId, postId, nowSql()]);
   await pool.query("UPDATE posts SET useful_count=useful_count+1 WHERE id=?", [postId]);
   const [postRows] = await pool.query("SELECT user_id FROM posts WHERE id=?", [postId]);
   if (postRows[0]) await addVitality(postRows[0].user_id, 5);
-  res.json({ ok: true });
+  res.json({ ok: true, useful: true });
 });
 
 app.post("/posts/:id/downvote", auth, async (req, res) => {
   const postId = req.params.id;
   const [exists] = await pool.query("SELECT 1 FROM post_downvotes WHERE user_id=? AND post_id=?", [req.userId, postId]);
-  if (exists[0]) return res.json({ ok: true });
+  if (exists[0]) {
+    await pool.query("DELETE FROM post_downvotes WHERE user_id=? AND post_id=?", [req.userId, postId]);
+    await pool.query("UPDATE posts SET downvote_count=GREATEST(downvote_count-1,0) WHERE id=?", [postId]);
+    const [postRows] = await pool.query("SELECT user_id FROM posts WHERE id=?", [postId]);
+    if (postRows[0]) await addVitality(postRows[0].user_id, 2);
+    return res.json({ ok: true, downvoted: false });
+  }
+  const [liked] = await pool.query("SELECT 1 FROM post_likes WHERE user_id=? AND post_id=?", [req.userId, postId]);
+  if (liked[0]) {
+    await pool.query("DELETE FROM post_likes WHERE user_id=? AND post_id=?", [req.userId, postId]);
+    await pool.query("UPDATE posts SET like_count=GREATEST(like_count-1,0) WHERE id=?", [postId]);
+    const [postRows] = await pool.query("SELECT user_id FROM posts WHERE id=?", [postId]);
+    if (postRows[0]) await addVitality(postRows[0].user_id, -2);
+  }
   await pool.query("INSERT INTO post_downvotes (user_id,post_id,created_at) VALUES (?,?,?)", [req.userId, postId, nowSql()]);
   await pool.query("UPDATE posts SET downvote_count=downvote_count+1 WHERE id=?", [postId]);
   const [postRows] = await pool.query("SELECT user_id FROM posts WHERE id=?", [postId]);
   if (postRows[0]) await addVitality(postRows[0].user_id, -2);
-  res.json({ ok: true });
+  res.json({ ok: true, downvoted: true });
 });
 
 app.post("/replies/:id/like", auth, async (req, res) => {
@@ -711,34 +758,66 @@ app.post("/replies/:id/like", auth, async (req, res) => {
   if (user.ban_like) return res.status(403).json({ error: "Likes disabled" });
   const replyId = req.params.id;
   const [exists] = await pool.query("SELECT 1 FROM reply_likes WHERE user_id=? AND reply_id=?", [req.userId, replyId]);
-  if (exists[0]) return res.json({ ok: true });
+  if (exists[0]) {
+    await pool.query("DELETE FROM reply_likes WHERE user_id=? AND reply_id=?", [req.userId, replyId]);
+    await pool.query("UPDATE replies SET like_count=GREATEST(like_count-1,0) WHERE id=?", [replyId]);
+    const [rows] = await pool.query("SELECT user_id FROM replies WHERE id=?", [replyId]);
+    if (rows[0]) await addVitality(rows[0].user_id, -2);
+    return res.json({ ok: true, liked: false });
+  }
+  const [down] = await pool.query("SELECT 1 FROM reply_downvotes WHERE user_id=? AND reply_id=?", [req.userId, replyId]);
+  if (down[0]) {
+    await pool.query("DELETE FROM reply_downvotes WHERE user_id=? AND reply_id=?", [req.userId, replyId]);
+    await pool.query("UPDATE replies SET downvote_count=GREATEST(downvote_count-1,0) WHERE id=?", [replyId]);
+    const [rows] = await pool.query("SELECT user_id FROM replies WHERE id=?", [replyId]);
+    if (rows[0]) await addVitality(rows[0].user_id, 2);
+  }
   await pool.query("INSERT INTO reply_likes (user_id,reply_id,created_at) VALUES (?,?,?)", [req.userId, replyId, nowSql()]);
   await pool.query("UPDATE replies SET like_count=like_count+1 WHERE id=?", [replyId]);
   const [rows] = await pool.query("SELECT user_id FROM replies WHERE id=?", [replyId]);
   if (rows[0]) await addVitality(rows[0].user_id, 2);
-  res.json({ ok: true });
+  res.json({ ok: true, liked: true });
 });
 
 app.post("/replies/:id/useful", auth, async (req, res) => {
   const replyId = req.params.id;
   const [exists] = await pool.query("SELECT 1 FROM reply_useful WHERE user_id=? AND reply_id=?", [req.userId, replyId]);
-  if (exists[0]) return res.json({ ok: true });
+  if (exists[0]) {
+    await pool.query("DELETE FROM reply_useful WHERE user_id=? AND reply_id=?", [req.userId, replyId]);
+    await pool.query("UPDATE replies SET useful_count=GREATEST(useful_count-1,0) WHERE id=?", [replyId]);
+    const [rows] = await pool.query("SELECT user_id FROM replies WHERE id=?", [replyId]);
+    if (rows[0]) await addVitality(rows[0].user_id, -5);
+    return res.json({ ok: true, useful: false });
+  }
   await pool.query("INSERT INTO reply_useful (user_id,reply_id,created_at) VALUES (?,?,?)", [req.userId, replyId, nowSql()]);
   await pool.query("UPDATE replies SET useful_count=useful_count+1 WHERE id=?", [replyId]);
   const [rows] = await pool.query("SELECT user_id FROM replies WHERE id=?", [replyId]);
   if (rows[0]) await addVitality(rows[0].user_id, 5);
-  res.json({ ok: true });
+  res.json({ ok: true, useful: true });
 });
 
 app.post("/replies/:id/downvote", auth, async (req, res) => {
   const replyId = req.params.id;
   const [exists] = await pool.query("SELECT 1 FROM reply_downvotes WHERE user_id=? AND reply_id=?", [req.userId, replyId]);
-  if (exists[0]) return res.json({ ok: true });
+  if (exists[0]) {
+    await pool.query("DELETE FROM reply_downvotes WHERE user_id=? AND reply_id=?", [req.userId, replyId]);
+    await pool.query("UPDATE replies SET downvote_count=GREATEST(downvote_count-1,0) WHERE id=?", [replyId]);
+    const [rows] = await pool.query("SELECT user_id FROM replies WHERE id=?", [replyId]);
+    if (rows[0]) await addVitality(rows[0].user_id, 2);
+    return res.json({ ok: true, downvoted: false });
+  }
+  const [liked] = await pool.query("SELECT 1 FROM reply_likes WHERE user_id=? AND reply_id=?", [req.userId, replyId]);
+  if (liked[0]) {
+    await pool.query("DELETE FROM reply_likes WHERE user_id=? AND reply_id=?", [req.userId, replyId]);
+    await pool.query("UPDATE replies SET like_count=GREATEST(like_count-1,0) WHERE id=?", [replyId]);
+    const [rows] = await pool.query("SELECT user_id FROM replies WHERE id=?", [replyId]);
+    if (rows[0]) await addVitality(rows[0].user_id, -2);
+  }
   await pool.query("INSERT INTO reply_downvotes (user_id,reply_id,created_at) VALUES (?,?,?)", [req.userId, replyId, nowSql()]);
   await pool.query("UPDATE replies SET downvote_count=downvote_count+1 WHERE id=?", [replyId]);
   const [rows] = await pool.query("SELECT user_id FROM replies WHERE id=?", [replyId]);
   if (rows[0]) await addVitality(rows[0].user_id, -2);
-  res.json({ ok: true });
+  res.json({ ok: true, downvoted: true });
 });
 
 app.post("/users/:id/follow", auth, async (req, res) => {
@@ -818,6 +897,25 @@ app.get("/tickets", auth, async (req, res) => {
     return res.json(rows);
   }
   const [rows] = await pool.query("SELECT * FROM tickets WHERE user_id=? ORDER BY updated_at DESC", [req.userId]);
+  res.json(rows);
+});
+
+app.get("/tickets/search", auth, async (req, res) => {
+  const q = (req.query.q || "").trim();
+  if (!q) return res.json([]);
+  const like = `%${q}%`;
+  const user = await getUserById(req.userId);
+  if (user.is_superadmin) {
+    const [rows] = await pool.query(
+      "SELECT t.*, u.username FROM tickets t JOIN users u ON t.user_id=u.id WHERE t.title LIKE ? OR t.content_md LIKE ? ORDER BY t.updated_at DESC LIMIT 200",
+      [like, like]
+    );
+    return res.json(rows);
+  }
+  const [rows] = await pool.query(
+    "SELECT * FROM tickets WHERE user_id=? AND (title LIKE ? OR content_md LIKE ?) ORDER BY updated_at DESC",
+    [req.userId, like, like]
+  );
   res.json(rows);
 });
 
