@@ -382,13 +382,32 @@ function Profile() {
 
 function UserProfile({ id }) {
   const [user, setUser] = useState(null);
+  const [followers, setFollowers] = useState([]);
+  const [following, setFollowing] = useState([]);
+  const [posts, setPosts] = useState([]);
 
   const load = async () => {
     const data = await apiFetch(`/users/${id}`);
     setUser(data);
+    const f1 = await apiFetch(`/users/${id}/followers`);
+    const f2 = await apiFetch(`/users/${id}/following`);
+    const p = await apiFetch(`/users/${id}/posts`);
+    setFollowers(f1);
+    setFollowing(f2);
+    setPosts(p);
   };
 
   useEffect(() => { load(); }, [id]);
+
+  const toggleFollow = async () => {
+    if (!user) return;
+    if (user.is_following) {
+      await apiFetch(`/users/${id}/unfollow`, { method: "POST" });
+    } else {
+      await apiFetch(`/users/${id}/follow`, { method: "POST" });
+    }
+    load();
+  };
 
   if (!user) return React.createElement("div", { className: "card" }, "加载中...");
   return React.createElement("div", { className: "card" },
@@ -398,10 +417,47 @@ function UserProfile({ id }) {
       React.createElement("div", null, `用户名：${user.username}`),
       React.createElement("div", null, `活力值：${user.vitality}`),
       React.createElement(Badge, { badge: user.badge }),
+      React.createElement("button", { className: "btn ghost", onClick: toggleFollow }, user.is_following ? "取消关注" : "关注"),
       React.createElement("div", null, `关注：${user.following} · 粉丝：${user.followers}`),
       React.createElement("div", null, `发帖：${user.posts} · 回复：${user.replies} · 被标记有用：${user.useful}`),
       React.createElement("div", null, `个性签名：${user.signature || ""}`),
-      React.createElement("div", null, `个人简介：${user.bio || ""}`)
+      React.createElement("div", null, `个人简介：${user.bio || ""}`),
+      React.createElement("div", { className: "title" }, "关注的人"),
+      following.length === 0
+        ? React.createElement("div", { className: "muted mini" }, "暂无")
+        : React.createElement("div", { className: "list" },
+            following.map((u) => React.createElement("div", { key: u.id, className: "card" },
+              React.createElement(AuthorLink, { id: u.id, name: `${u.username} (ID:${u.id})` }),
+              React.createElement(Badge, { badge: u.badge })
+            ))
+          ),
+      React.createElement("div", { className: "title" }, "粉丝"),
+      followers.length === 0
+        ? React.createElement("div", { className: "muted mini" }, "暂无")
+        : React.createElement("div", { className: "list" },
+            followers.map((u) => React.createElement("div", { key: u.id, className: "card" },
+              React.createElement(AuthorLink, { id: u.id, name: `${u.username} (ID:${u.id})` }),
+              React.createElement(Badge, { badge: u.badge })
+            ))
+          ),
+      React.createElement("div", { className: "title" }, "发布的帖子"),
+      posts.length === 0
+        ? React.createElement("div", { className: "muted mini" }, "暂无")
+        : React.createElement("div", { className: "list" },
+            posts.map((p) => React.createElement("div", { key: p.id, className: "card" },
+              React.createElement("div", { className: "row" },
+                React.createElement("div", { className: "title" }, p.title),
+                React.createElement(Badge, { badge: p.badge })
+              ),
+              React.createElement("div", { className: "post-meta muted mini" },
+                React.createElement(AuthorLink, { id: p.user_id, name: `${p.username} (ID:${p.user_id})` }),
+                (p.pinned ? " · 置顶" : "") + " · 回复 " + p.reply_count + " · 赞 " + p.like_count + " · 有用 " + p.useful_count
+              ),
+              React.createElement("div", { className: "right" },
+                React.createElement("button", { className: "btn ghost", onClick: () => (location.hash = `#/post/${p.id}`) }, "查看")
+              )
+            ))
+          )
     )
   );
 }
