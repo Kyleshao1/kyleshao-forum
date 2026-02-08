@@ -56,6 +56,57 @@ async function sendResetEmail(to, token) {
   }
 }
 
+function extractMentions(text) {
+  if (!text) return [];
+  const pattern = /@([A-Za-z0-9_.\-\u4e00-\u9fa5]{2,32})/g;
+  const names = new Set();
+  for (const match of String(text).matchAll(pattern)) {
+    names.add(match[1]);
+  }
+  return Array.from(names).slice(0, 20);
+}
+
+function snippetFromText(text, maxLen = 120) {
+  const flat = String(text || "").replace(/\s+/g, " ").trim();
+  if (!flat) return "";
+  if (flat.length <= maxLen) return flat;
+  return flat.slice(0, maxLen) + "...";
+}
+
+async function sendMentionMessages({ authorId, authorName, content_md, postId, replyId }) {
+  const names = extractMentions(content_md);
+  if (names.length === 0) return;
+  const placeholders = names.map(() => "?").join(",");
+  const [rows] = await pool.query(
+    `SELECT id, username FROM users WHERE username IN (${placeholders})`,
+    names
+  );
+  const uniqueTargets = new Map();
+  for (const row of rows) {
+    if (row.id === authorId) continue;
+    uniqueTargets.set(row.id, row.username);
+  }
+  if (uniqueTargets.size === 0) return;
+
+  const snippet = snippetFromText(content_md);
+  const location = replyId ? `帖子 #${postId} 的回复 #${replyId}` : `帖子 #${postId}`;
+  const base = `你被 @${authorName} 提及。\n位置：${location}`;
+  const detail = snippet ? `\n内容节选：${snippet}` : "";
+  const content = base + detail;
+  const created_at = nowSql();
+
+  const values = Array.from(uniqueTargets.keys()).map((targetId) => [
+    authorId,
+    targetId,
+    content,
+    created_at
+  ]);
+  await pool.query(
+    "INSERT INTO messages (from_id,to_id,content_md,created_at) VALUES ?",
+    [values]
+  );
+}
+
 const pool = mysql.createPool({
   host: DB_HOST,
   port: Number(DB_PORT),
@@ -529,6 +580,14 @@ app.post("/posts", auth, async (req, res) => {
     [req.userId, title, content_md, created_at, created_at]
   );
   await addVitality(req.userId, 2);
+  sendMentionMessages({
+    authorId: req.userId,
+    authorName: user.username,
+    content_md,
+    postId: result.insertId
+  }).catch((e) => {
+    console.error("Mention notify failed:", e?.message || e);
+  });
   res.json({ id: result.insertId });
 });
 
@@ -645,12 +704,21 @@ app.post("/posts/:id/replies", auth, async (req, res) => {
   const user = await getUserById(req.userId);
   if (user.banned || user.mute) return res.status(403).json({ error: "Muted" });
   const created_at = nowSql();
-  await pool.query(
+  const [result] = await pool.query(
     "INSERT INTO replies (post_id,user_id,content_md,created_at) VALUES (?,?,?,?)",
     [req.params.id, req.userId, content_md, created_at]
   );
   await pool.query("UPDATE posts SET reply_count=reply_count+1 WHERE id=?", [req.params.id]);
   await addVitality(req.userId, 1);
+  sendMentionMessages({
+    authorId: req.userId,
+    authorName: user.username,
+    content_md,
+    postId: Number(req.params.id),
+    replyId: result.insertId
+  }).catch((e) => {
+    console.error("Mention notify failed:", e?.message || e);
+  });
   res.json({ ok: true });
 });
 
