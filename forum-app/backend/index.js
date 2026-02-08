@@ -459,6 +459,7 @@ app.get("/users/:id", auth, async (req, res) => {
   user = await applyDecayIfNeeded(user);
   const [followers] = await pool.query("SELECT COUNT(*) c FROM follows WHERE following_id=?", [user.id]);
   const [following] = await pool.query("SELECT COUNT(*) c FROM follows WHERE follower_id=?", [user.id]);
+  const [isFollowingRows] = await pool.query("SELECT 1 FROM follows WHERE follower_id=? AND following_id=?", [req.userId, user.id]);
   const [postCount] = await pool.query("SELECT COUNT(*) c FROM posts WHERE user_id=? AND deleted=0", [user.id]);
   const [replyCount] = await pool.query("SELECT COUNT(*) c FROM replies WHERE user_id=? AND deleted=0", [user.id]);
   const [usefulCount] = await pool.query(
@@ -480,10 +481,41 @@ app.get("/users/:id", auth, async (req, res) => {
     badge,
     followers: followers[0].c,
     following: following[0].c,
+    is_following: !!isFollowingRows[0],
     posts: postCount[0].c,
     replies: replyCount[0].c,
     useful: totalUseful
   });
+});
+
+app.get("/users/:id/followers", auth, async (req, res) => {
+  const [rows] = await pool.query(
+    "SELECT u.id, u.username, u.vitality, u.is_admin, u.is_superadmin FROM follows f JOIN users u ON f.follower_id=u.id WHERE f.following_id=? ORDER BY f.created_at DESC LIMIT 200",
+    [req.params.id]
+  );
+  const mapped = rows.map((u) => ({ ...u, badge: badgeFromVitality(u.is_admin || u.is_superadmin ? 9999 : u.vitality, u.is_admin || u.is_superadmin) }));
+  res.json(mapped);
+});
+
+app.get("/users/:id/following", auth, async (req, res) => {
+  const [rows] = await pool.query(
+    "SELECT u.id, u.username, u.vitality, u.is_admin, u.is_superadmin FROM follows f JOIN users u ON f.following_id=u.id WHERE f.follower_id=? ORDER BY f.created_at DESC LIMIT 200",
+    [req.params.id]
+  );
+  const mapped = rows.map((u) => ({ ...u, badge: badgeFromVitality(u.is_admin || u.is_superadmin ? 9999 : u.vitality, u.is_admin || u.is_superadmin) }));
+  res.json(mapped);
+});
+
+app.get("/users/:id/posts", auth, async (req, res) => {
+  const [rows] = await pool.query(
+    "SELECT p.*, u.username, u.is_admin, u.is_superadmin, u.vitality FROM posts p JOIN users u ON p.user_id=u.id WHERE p.user_id=? AND p.deleted=0 ORDER BY p.created_at DESC LIMIT 200",
+    [req.params.id]
+  );
+  const mapped = rows.map((r) => ({
+    ...r,
+    badge: badgeFromVitality(r.is_admin || r.is_superadmin ? 9999 : r.vitality, r.is_admin || r.is_superadmin)
+  }));
+  res.json(mapped);
 });
 
 app.post("/posts", auth, async (req, res) => {
