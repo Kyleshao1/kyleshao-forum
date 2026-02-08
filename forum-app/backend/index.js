@@ -102,6 +102,7 @@ async function ensureTables() {
         created_at DATETIME NOT NULL,
         updated_at DATETIME NOT NULL,
         deleted TINYINT NOT NULL DEFAULT 0,
+        pinned TINYINT NOT NULL DEFAULT 0,
         like_count INT NOT NULL DEFAULT 0,
         useful_count INT NOT NULL DEFAULT 0,
         downvote_count INT NOT NULL DEFAULT 0,
@@ -109,6 +110,9 @@ async function ensureTables() {
         FOREIGN KEY (user_id) REFERENCES users(id)
       )
     `);
+    try {
+      await conn.query("ALTER TABLE posts ADD COLUMN IF NOT EXISTS pinned TINYINT NOT NULL DEFAULT 0");
+    } catch {}
     await conn.query(`
       CREATE TABLE IF NOT EXISTS replies (
         id BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -217,6 +221,17 @@ async function ensureTables() {
       )
     `);
     await conn.query(`
+      CREATE TABLE IF NOT EXISTS moderation_logs (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        actor_id BIGINT NOT NULL,
+        target_user_id BIGINT,
+        type VARCHAR(20) NOT NULL,
+        action VARCHAR(50) NOT NULL,
+        detail TEXT,
+        created_at DATETIME NOT NULL
+      )
+    `);
+    await conn.query(`
       CREATE TABLE IF NOT EXISTS password_reset_tokens (
         id BIGINT PRIMARY KEY AUTO_INCREMENT,
         user_id BIGINT NOT NULL,
@@ -291,6 +306,13 @@ async function sendReportToSuperadmin(adminId, content) {
   await pool.query(
     "INSERT INTO messages (from_id,to_id,content_md,created_at) VALUES (?,?,?,?)",
     [adminId, toId, content, nowSql()]
+  );
+}
+
+async function logModeration({ actorId, targetUserId = null, type, action, detail }) {
+  await pool.query(
+    "INSERT INTO moderation_logs (actor_id, target_user_id, type, action, detail, created_at) VALUES (?,?,?,?,?,?)",
+    [actorId, targetUserId, type, action, detail || null, nowSql()]
   );
 }
 
@@ -480,7 +502,7 @@ app.post("/posts", auth, async (req, res) => {
 
 app.get("/posts", auth, async (req, res) => {
   const [rows] = await pool.query(
-    "SELECT p.*, u.username, u.is_admin, u.is_superadmin, u.vitality FROM posts p JOIN users u ON p.user_id=u.id WHERE p.deleted=0 ORDER BY p.created_at DESC LIMIT 200"
+    "SELECT p.*, u.username, u.is_admin, u.is_superadmin, u.vitality FROM posts p JOIN users u ON p.user_id=u.id WHERE p.deleted=0 ORDER BY p.pinned DESC, p.created_at DESC LIMIT 200"
   );
   const mapped = rows.map((r) => {
     const badge = badgeFromVitality(r.is_admin || r.is_superadmin ? 9999 : r.vitality, r.is_admin || r.is_superadmin);
@@ -509,6 +531,22 @@ app.get("/posts/:id", auth, async (req, res) => {
     badge: badgeFromVitality(r.is_admin || r.is_superadmin ? 9999 : r.vitality, r.is_admin || r.is_superadmin)
   }));
   res.json({ post, replies: mappedReplies });
+});
+
+app.post("/posts/:id/pin", auth, requireAdmin, async (req, res) => {
+  const postId = Number(req.params.id);
+  const { pinned } = req.body || {};
+  await pool.query("UPDATE posts SET pinned=? WHERE id=?", [pinned ? 1 : 0, postId]);
+  const [rows] = await pool.query("SELECT user_id FROM posts WHERE id=?", [postId]);
+  const targetUserId = rows[0] ? rows[0].user_id : null;
+  await logModeration({
+    actorId: req.userId,
+    targetUserId,
+    type: "reward",
+    action: pinned ? "pin_post" : "unpin_post",
+    detail: `post_id=${postId}`
+  });
+  res.json({ ok: true });
 });
 
 app.patch("/posts/:id", auth, async (req, res) => {
@@ -543,6 +581,13 @@ app.delete("/posts/:id", auth, async (req, res) => {
   await pool.query("UPDATE posts SET deleted=1 WHERE id=?", [postId]);
   if (isAdmin && !isOwner) {
     await sendReportToSuperadmin(req.userId, `管理员删除帖子 #${postId}`);
+    await logModeration({
+      actorId: req.userId,
+      targetUserId: post.user_id,
+      type: "penalty",
+      action: "delete_post",
+      detail: `post_id=${postId}`
+    });
   }
   res.json({ ok: true });
 });
@@ -574,6 +619,13 @@ app.delete("/replies/:id", auth, async (req, res) => {
   await pool.query("UPDATE replies SET deleted=1 WHERE id=?", [replyId]);
   if (isAdmin && !isOwner) {
     await sendReportToSuperadmin(req.userId, `管理员删除回复 #${replyId}`);
+    await logModeration({
+      actorId: req.userId,
+      targetUserId: reply.user_id,
+      type: "penalty",
+      action: "delete_reply",
+      detail: `reply_id=${replyId}`
+    });
   }
   res.json({ ok: true });
 });
@@ -766,11 +818,24 @@ app.delete("/tickets/:id", auth, requireSuperadmin, async (req, res) => {
   res.json({ ok: true });
 });
 
+app.get("/moderation/logs", auth, async (req, res) => {
+  const [rows] = await pool.query(`
+    SELECT l.*, a.username AS actor_name, t.username AS target_name
+    FROM moderation_logs l
+    LEFT JOIN users a ON l.actor_id=a.id
+    LEFT JOIN users t ON l.target_user_id=t.id
+    ORDER BY l.created_at DESC
+    LIMIT 20
+  `);
+  res.json(rows);
+});
+
 app.post("/admin/warn", auth, requireAdmin, async (req, res) => {
   const { user_id, reason } = req.body || {};
   if (!user_id || !reason) return res.status(400).json({ error: "Missing fields" });
   await pool.query("INSERT INTO warnings (admin_id,user_id,reason,created_at) VALUES (?,?,?,?)", [req.userId, user_id, reason, nowSql()]);
   await sendReportToSuperadmin(req.userId, `管理员警告用户 #${user_id}: ${reason}`);
+  await logModeration({ actorId: req.userId, targetUserId: user_id, type: "penalty", action: "warn", detail: reason });
   res.json({ ok: true });
 });
 
@@ -778,6 +843,13 @@ app.post("/admin/mute", auth, requireAdmin, async (req, res) => {
   const { user_id, mute } = req.body || {};
   await pool.query("UPDATE users SET mute=? WHERE id=?", [mute ? 1 : 0, user_id]);
   await sendReportToSuperadmin(req.userId, `管理员修改禁言 用户 #${user_id}: ${mute ? "禁言" : "解除"}`);
+  await logModeration({
+    actorId: req.userId,
+    targetUserId: user_id,
+    type: mute ? "penalty" : "reward",
+    action: mute ? "mute" : "unmute",
+    detail: ""
+  });
   res.json({ ok: true });
 });
 
@@ -785,6 +857,13 @@ app.post("/admin/ban-pm", auth, requireAdmin, async (req, res) => {
   const { user_id, ban_pm } = req.body || {};
   await pool.query("UPDATE users SET ban_pm=? WHERE id=?", [ban_pm ? 1 : 0, user_id]);
   await sendReportToSuperadmin(req.userId, `管理员修改禁私信 用户 #${user_id}: ${ban_pm ? "禁" : "解除"}`);
+  await logModeration({
+    actorId: req.userId,
+    targetUserId: user_id,
+    type: ban_pm ? "penalty" : "reward",
+    action: ban_pm ? "ban_pm" : "unban_pm",
+    detail: ""
+  });
   res.json({ ok: true });
 });
 
@@ -792,6 +871,13 @@ app.post("/admin/ban-like", auth, requireAdmin, async (req, res) => {
   const { user_id, ban_like } = req.body || {};
   await pool.query("UPDATE users SET ban_like=? WHERE id=?", [ban_like ? 1 : 0, user_id]);
   await sendReportToSuperadmin(req.userId, `管理员修改禁点赞 用户 #${user_id}: ${ban_like ? "禁" : "解除"}`);
+  await logModeration({
+    actorId: req.userId,
+    targetUserId: user_id,
+    type: ban_like ? "penalty" : "reward",
+    action: ban_like ? "ban_like" : "unban_like",
+    detail: ""
+  });
   res.json({ ok: true });
 });
 
@@ -799,32 +885,73 @@ app.post("/admin/ban", auth, requireAdmin, async (req, res) => {
   const { user_id, banned } = req.body || {};
   await pool.query("UPDATE users SET banned=? WHERE id=?", [banned ? 1 : 0, user_id]);
   await sendReportToSuperadmin(req.userId, `管理员封禁用户 #${user_id}: ${banned ? "封禁" : "解除"}`);
+  await logModeration({
+    actorId: req.userId,
+    targetUserId: user_id,
+    type: banned ? "penalty" : "reward",
+    action: banned ? "ban" : "unban",
+    detail: ""
+  });
   res.json({ ok: true });
 });
 
 app.post("/admin/delete-post", auth, requireAdmin, async (req, res) => {
   const { post_id } = req.body || {};
+  const [rows] = await pool.query("SELECT user_id FROM posts WHERE id=?", [post_id]);
   await pool.query("UPDATE posts SET deleted=1 WHERE id=?", [post_id]);
   await sendReportToSuperadmin(req.userId, `管理员删除帖子 #${post_id}`);
+  if (rows[0]) {
+    await logModeration({
+      actorId: req.userId,
+      targetUserId: rows[0].user_id,
+      type: "penalty",
+      action: "delete_post",
+      detail: `post_id=${post_id}`
+    });
+  }
   res.json({ ok: true });
 });
 
 app.post("/admin/delete-reply", auth, requireAdmin, async (req, res) => {
   const { reply_id } = req.body || {};
+  const [rows] = await pool.query("SELECT user_id FROM replies WHERE id=?", [reply_id]);
   await pool.query("UPDATE replies SET deleted=1 WHERE id=?", [reply_id]);
   await sendReportToSuperadmin(req.userId, `管理员删除回复 #${reply_id}`);
+  if (rows[0]) {
+    await logModeration({
+      actorId: req.userId,
+      targetUserId: rows[0].user_id,
+      type: "penalty",
+      action: "delete_reply",
+      detail: `reply_id=${reply_id}`
+    });
+  }
   res.json({ ok: true });
 });
 
 app.post("/admin/promote", auth, requireSuperadmin, async (req, res) => {
   const { user_id, is_admin } = req.body || {};
   await pool.query("UPDATE users SET is_admin=? WHERE id=?", [is_admin ? 1 : 0, user_id]);
+  await logModeration({
+    actorId: req.userId,
+    targetUserId: user_id,
+    type: "reward",
+    action: "promote_admin",
+    detail: ""
+  });
   res.json({ ok: true });
 });
 
 app.post("/admin/demote", auth, requireSuperadmin, async (req, res) => {
   const { user_id, is_admin } = req.body || {};
   await pool.query("UPDATE users SET is_admin=? WHERE id=?", [is_admin ? 1 : 0, user_id]);
+  await logModeration({
+    actorId: req.userId,
+    targetUserId: user_id,
+    type: "penalty",
+    action: "demote_admin",
+    detail: ""
+  });
   res.json({ ok: true });
 });
 
@@ -834,6 +961,13 @@ app.post("/admin/delete-account", auth, requireAdmin, async (req, res) => {
   if (!user || user.is_superadmin) return res.status(400).json({ error: "Cannot delete" });
   await pool.query("UPDATE users SET banned=1 WHERE id=?", [user_id]);
   await sendReportToSuperadmin(req.userId, `管理员封禁账号 #${user_id}`);
+  await logModeration({
+    actorId: req.userId,
+    targetUserId: user_id,
+    type: "penalty",
+    action: "ban_account",
+    detail: ""
+  });
   res.json({ ok: true });
 });
 
