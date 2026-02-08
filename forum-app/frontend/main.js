@@ -557,6 +557,7 @@ function Messages() {
   const [list, setList] = useState([]);
   const [toId, setToId] = useState("");
   const [content, setContent] = useState("");
+  const [preview, setPreview] = useState(false);
 
   const load = async () => {
     const data = await apiFetch("/messages");
@@ -594,6 +595,13 @@ function Messages() {
       React.createElement("div", { className: "list" },
         React.createElement("input", { placeholder: "对方用户ID", value: toId, onChange: (e) => setToId(e.target.value) }),
         React.createElement("textarea", { placeholder: "内容", value: content, onChange: (e) => setContent(e.target.value) }),
+        React.createElement("div", { className: "row" },
+          React.createElement("button", { className: "btn ghost", onClick: () => setPreview(!preview) }, preview ? "关闭预览" : "预览")
+        ),
+        preview && React.createElement("div", { className: "card" },
+          React.createElement("div", { className: "muted mini" }, "预览"),
+          React.createElement(Markdown, { content })
+        ),
         React.createElement("button", { className: "btn", onClick: send }, "发送")
       )
     )
@@ -607,6 +615,7 @@ function Tickets() {
   const [me, setMe] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [query, setQuery] = useState("");
+  const [preview, setPreview] = useState(false);
 
   const load = async () => {
     const data = await apiFetch("/tickets");
@@ -702,6 +711,13 @@ function Tickets() {
         React.createElement("input", { placeholder: "标题", value: title, onChange: (e) => setTitle(e.target.value) }),
         React.createElement("textarea", { placeholder: "问题描述", value: content, onChange: (e) => setContent(e.target.value) }),
         React.createElement("div", { className: "row" },
+          React.createElement("button", { className: "btn ghost", onClick: () => setPreview(!preview) }, preview ? "关闭预览" : "预览")
+        ),
+        preview && React.createElement("div", { className: "card" },
+          React.createElement("div", { className: "muted mini" }, "预览"),
+          React.createElement(Markdown, { content: content || "" })
+        ),
+        React.createElement("div", { className: "row" },
           React.createElement("button", { className: "btn", onClick: submit }, editingId ? "保存" : "提交"),
           editingId && React.createElement("button", {
             className: "btn ghost",
@@ -709,6 +725,7 @@ function Tickets() {
               setEditingId(null);
               setTitle("");
               setContent("");
+              setPreview(false);
             }
           }, "取消")
         )
