@@ -34,7 +34,8 @@ function Markdown({ content }) {
       { left: "$", right: "$", display: false }
     ]});
   });
-  const html = useMemo(() => marked.parse(content || ""), [content]);
+  const rawHtml = useMemo(() => marked.parse(content || ""), [content]);
+  const html = useMemo(() => linkifyMentions(rawHtml), [rawHtml]);
   return React.createElement("div", { className: "markdown", dangerouslySetInnerHTML: { __html: html } });
 }
 
@@ -66,6 +67,41 @@ function highlightText(text, keyword) {
   const safe = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const re = new RegExp(safe, "gi");
   return escaped.replace(re, (m) => `<mark>${m}</mark>`);
+}
+
+function linkifyMentions(html) {
+  if (!html) return html;
+  const parts = html.split(/(<[^>]+>)/g);
+  let inCode = 0;
+  let inPre = 0;
+  let inAnchor = 0;
+  const re = /(^|[^A-Za-z0-9_.\-\u4e00-\u9fa5])@([A-Za-z0-9_.\-\u4e00-\u9fa5]{2,32})/g;
+  return parts.map((part) => {
+    if (!part) return part;
+    if (part.startsWith("<")) {
+      const endTag = part.match(/^<\s*\/\s*([a-z0-9]+)/i);
+      const startTag = part.match(/^<\s*([a-z0-9]+)/i);
+      const tag = (endTag || startTag)?.[1]?.toLowerCase();
+      if (tag === "code") {
+        if (endTag) inCode = Math.max(0, inCode - 1);
+        else inCode += 1;
+      }
+      if (tag === "pre") {
+        if (endTag) inPre = Math.max(0, inPre - 1);
+        else inPre += 1;
+      }
+      if (tag === "a") {
+        if (endTag) inAnchor = Math.max(0, inAnchor - 1);
+        else inAnchor += 1;
+      }
+      return part;
+    }
+    if (inCode || inPre || inAnchor) return part;
+    return part.replace(re, (m, prefix, name) => {
+      const href = `#/u/${encodeURIComponent(name)}`;
+      return `${prefix}<a class="mention" href="${href}">@${name}</a>`;
+    });
+  }).join("");
 }
 
 function AuthPanel({ onAuthed }) {
@@ -165,10 +201,14 @@ function Feed({ go }) {
   };
 
   const search = async () => {
-    const q = query.trim();
-    if (!q) return load();
-    const data = await apiFetch(`/posts/search?q=${encodeURIComponent(q)}`);
-    setPosts(data);
+    try {
+      const q = query.trim();
+      if (!q) return load();
+      const data = await apiFetch(`/posts/search?q=${encodeURIComponent(q)}`);
+      setPosts(data);
+    } catch (e) {
+      setError(e.message);
+    }
   };
 
   useEffect(() => { load(); }, []);
@@ -579,10 +619,15 @@ function Tickets() {
   };
 
   const search = async () => {
-    const q = query.trim();
-    if (!q) return load();
-    const data = await apiFetch(`/tickets/search?q=${encodeURIComponent(q)}`);
-    setList(data);
+    try {
+      const q = query.trim();
+      if (!q) return load();
+      const data = await apiFetch(`/tickets/search?q=${encodeURIComponent(q)}`);
+      setList(data);
+    } catch (e) {
+      // reuse list area to show error via console; keep UI stable
+      console.error(e);
+    }
   };
 
   const setStatus = async (id, status) => {
@@ -723,6 +768,30 @@ function AdminPanel() {
   );
 }
 
+function UserByName({ username, go }) {
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let active = true;
+    setError("");
+    apiFetch(`/users/by-username/${encodeURIComponent(username)}`).then((data) => {
+      if (!active) return;
+      go(`/user/${data.id}`);
+    }).catch((e) => {
+      if (!active) return;
+      setError(e.message || "未找到用户");
+    });
+    return () => { active = false; };
+  }, [username, go]);
+
+  if (error) {
+    return React.createElement("div", { className: "card" },
+      React.createElement("div", { className: "title" }, "无法打开用户"),
+      React.createElement("div", { className: "muted" }, error)
+    );
+  }
+  return React.createElement("div", { className: "card" }, "正在跳转...");
+}
+
 function App() {
   const [route, go] = useHashRoute();
   const [authed, setAuthed] = useState(!!localStorage.getItem("token"));
@@ -761,6 +830,10 @@ function App() {
   if (route.startsWith("/post/")) {
     const id = route.split("/")[2];
     return React.createElement(PostDetail, { id, go, me });
+  }
+  if (route.startsWith("/u/")) {
+    const username = decodeURIComponent(route.split("/")[2] || "");
+    return React.createElement(UserByName, { username, go });
   }
   if (route.startsWith("/user/")) {
     const id = route.split("/")[2];
