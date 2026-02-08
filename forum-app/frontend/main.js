@@ -157,7 +157,7 @@ function Feed({ go }) {
         ),
         React.createElement("div", { className: "post-meta muted mini" },
           React.createElement(AuthorLink, { id: p.user_id, name: `${p.username} (ID:${p.user_id})` }),
-          " · 回复 " + p.reply_count + " · 赞 " + p.like_count + " · 有用 " + p.useful_count
+          (p.pinned ? " · 置顶" : "") + " · 回复 " + p.reply_count + " · 赞 " + p.like_count + " · 有用 " + p.useful_count
         ),
         React.createElement("div", { className: "right" },
           React.createElement("button", { className: "btn ghost", onClick: () => go(`/post/${p.id}`) }, "查看")
@@ -185,6 +185,7 @@ function NewPost({ go }) {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [error, setError] = useState("");
+  const [preview, setPreview] = useState(false);
 
   const submit = async () => {
     try {
@@ -200,6 +201,13 @@ function NewPost({ go }) {
     React.createElement("div", { className: "list" },
       React.createElement("input", { placeholder: "标题", value: title, onChange: (e) => setTitle(e.target.value) }),
       React.createElement("textarea", { placeholder: "支持 Markdown 与 LaTeX：例如 $E=mc^2$", value: content, onChange: (e) => setContent(e.target.value) }),
+      React.createElement("div", { className: "row" },
+        React.createElement("button", { className: "btn ghost", onClick: () => setPreview(!preview) }, preview ? "关闭预览" : "预览")
+      ),
+      preview && React.createElement("div", { className: "card" },
+        React.createElement("div", { className: "muted mini" }, "预览"),
+        React.createElement(Markdown, { content })
+      ),
       error && React.createElement("div", { className: "muted" }, error),
       React.createElement("button", { className: "btn", onClick: submit }, "发布")
     )
@@ -213,6 +221,7 @@ function PostDetail({ id, go, me }) {
   const [editing, setEditing] = useState(false);
   const [editTitle, setEditTitle] = useState("");
   const [editContent, setEditContent] = useState("");
+  const [replyPreview, setReplyPreview] = useState(false);
 
   const load = async () => {
     try {
@@ -260,9 +269,15 @@ function PostDetail({ id, go, me }) {
     load();
   };
 
+  const togglePin = async () => {
+    await apiFetch(`/posts/${id}/pin`, { method: "POST", body: JSON.stringify({ pinned: !data.post.pinned }) });
+    load();
+  };
+
   if (!data) return React.createElement("div", { className: "card" }, error || "加载中...");
   const canDeletePost = me && (me.id === data.post.user_id || me.is_admin || me.is_superadmin);
   const canEditPost = canDeletePost;
+  const canPin = me && (me.is_admin || me.is_superadmin);
   return React.createElement("div", { className: "list" },
     React.createElement("div", { className: "card" },
       React.createElement("div", { className: "row" },
@@ -270,7 +285,8 @@ function PostDetail({ id, go, me }) {
         React.createElement(Badge, { badge: data.post.badge })
       ),
       React.createElement("div", { className: "post-meta muted mini" },
-        React.createElement(AuthorLink, { id: data.post.user_id, name: `${data.post.username} (ID:${data.post.user_id})` })
+        React.createElement(AuthorLink, { id: data.post.user_id, name: `${data.post.username} (ID:${data.post.user_id})` }),
+        data.post.pinned ? " · 置顶" : ""
       ),
       editing
         ? React.createElement("div", { className: "list" },
@@ -287,6 +303,7 @@ function PostDetail({ id, go, me }) {
         React.createElement("button", { className: "btn ghost", onClick: () => act(`/posts/${id}/useful`) }, `有用 ${data.post.useful_count}`),
         React.createElement("button", { className: "btn ghost", onClick: () => act(`/posts/${id}/downvote`) }, `点踩 ${data.post.downvote_count}`),
         canEditPost && !editing && React.createElement("button", { className: "btn ghost", onClick: () => setEditing(true) }, "编辑帖子"),
+        canPin && React.createElement("button", { className: "btn ghost", onClick: togglePin }, data.post.pinned ? "取消置顶" : "置顶"),
         canDeletePost && React.createElement("button", { className: "btn ghost", onClick: deletePost }, "删除帖子")
       )
     ),
@@ -294,6 +311,13 @@ function PostDetail({ id, go, me }) {
       React.createElement("div", { className: "title" }, "回复"),
       React.createElement("div", { className: "list" },
         React.createElement("textarea", { placeholder: "写下你的回复", value: reply, onChange: (e) => setReply(e.target.value) }),
+        React.createElement("div", { className: "row" },
+          React.createElement("button", { className: "btn ghost", onClick: () => setReplyPreview(!replyPreview) }, replyPreview ? "关闭预览" : "预览")
+        ),
+        replyPreview && React.createElement("div", { className: "card" },
+          React.createElement("div", { className: "muted mini" }, "预览"),
+          React.createElement(Markdown, { content: reply })
+        ),
         React.createElement("button", { className: "btn", onClick: submitReply }, "发送回复")
       )
     ),
@@ -515,6 +539,34 @@ function Tickets() {
   );
 }
 
+function Ostracism() {
+  const [logs, setLogs] = useState([]);
+  const load = async () => {
+    const data = await apiFetch("/moderation/logs");
+    setLogs(data);
+  };
+  useEffect(() => { load(); }, []);
+  return React.createElement("div", { className: "card" },
+    React.createElement("div", { className: "title" }, "陶片放逐（最近20条）"),
+    React.createElement("div", { className: "list" },
+      logs.map((l) => React.createElement("div", { key: l.id, className: "card" },
+        React.createElement("div", { className: "muted mini" },
+          `${l.type === "reward" ? "奖励" : "处罚"} · ${l.action} · ${l.created_at}`
+        ),
+        React.createElement("div", null,
+          "执行人：",
+          React.createElement(AuthorLink, { id: l.actor_id, name: `${l.actor_name || "ID"} (ID:${l.actor_id})` })
+        ),
+        l.target_user_id && React.createElement("div", null,
+          "对象：",
+          React.createElement(AuthorLink, { id: l.target_user_id, name: `${l.target_name || "ID"} (ID:${l.target_user_id})` })
+        ),
+        l.detail && React.createElement("div", { className: "muted mini" }, l.detail)
+      ))
+    )
+  );
+}
+
 function AdminPanel() {
   const [userId, setUserId] = useState("");
   const [postId, setPostId] = useState("");
@@ -597,6 +649,7 @@ function App() {
   if (route === "/me") return React.createElement(Profile);
   if (route === "/messages") return React.createElement(Messages);
   if (route === "/tickets") return React.createElement(Tickets);
+  if (route === "/ostracism") return React.createElement(Ostracism);
   if (route === "/admin") return React.createElement(AdminPanel);
   return React.createElement(Feed, { go });
 }
