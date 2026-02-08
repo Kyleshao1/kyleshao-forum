@@ -429,6 +429,7 @@ function Profile() {
   const [me, setMe] = useState(null);
   const [bio, setBio] = useState("");
   const [signature, setSignature] = useState("");
+  const [preview, setPreview] = useState(false);
 
   const load = async () => {
     const data = await apiFetch("/me");
@@ -452,8 +453,17 @@ function Profile() {
       React.createElement("div", null, `用户名：${me.username}`),
       React.createElement("div", null, `活力值：${me.vitality}`),
       React.createElement(Badge, { badge: me.badge }),
+      React.createElement("div", { className: "row" },
+        React.createElement("button", { className: "btn ghost", onClick: () => setPreview(!preview) }, preview ? "关闭预览" : "预览")
+      ),
       React.createElement("input", { placeholder: "个性签名", value: signature, onChange: (e) => setSignature(e.target.value) }),
       React.createElement("textarea", { placeholder: "个人简介", value: bio, onChange: (e) => setBio(e.target.value) }),
+      preview && React.createElement("div", { className: "card" },
+        React.createElement("div", { className: "muted mini" }, "预览 · 个性签名"),
+        React.createElement(Markdown, { content: signature || "" }),
+        React.createElement("div", { className: "muted mini" }, "预览 · 个人简介"),
+        React.createElement(Markdown, { content: bio || "" })
+      ),
       React.createElement("button", { className: "btn", onClick: save }, "保存")
     )
   );
@@ -499,8 +509,10 @@ function UserProfile({ id }) {
       React.createElement("button", { className: "btn ghost", onClick: toggleFollow }, user.is_following ? "取消关注" : "关注"),
       React.createElement("div", null, `关注：${user.following} · 粉丝：${user.followers}`),
       React.createElement("div", null, `发帖：${user.posts} · 回复：${user.replies} · 被标记有用：${user.useful}`),
-      React.createElement("div", null, `个性签名：${user.signature || ""}`),
-      React.createElement("div", null, `个人简介：${user.bio || ""}`),
+      React.createElement("div", { className: "muted mini" }, "个性签名"),
+      React.createElement(Markdown, { content: user.signature || "" }),
+      React.createElement("div", { className: "muted mini" }, "个人简介"),
+      React.createElement(Markdown, { content: user.bio || "" }),
       React.createElement("div", { className: "title" }, "关注的人"),
       following.length === 0
         ? React.createElement("div", { className: "muted mini" }, "暂无")
