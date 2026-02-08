@@ -22,7 +22,7 @@ function apiFetch(path, options = {}) {
   if (token) headers.Authorization = `Bearer ${token}`;
   return fetch(`${API_DEFAULT}${path}`, { ...options, headers }).then(async (r) => {
     const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error || "Request failed");
+    if (!r.ok) throw new Error(data.error || "请求失败");
     return data;
   });
 }
@@ -225,7 +225,7 @@ function Feed({ go }) {
           React.createElement(Badge, { badge: p.badge })
         ),
         React.createElement("div", { className: "post-meta muted mini" },
-          React.createElement(AuthorLink, { id: p.user_id, name: `${p.username} (ID:${p.user_id})` }),
+          React.createElement(AuthorLink, { id: p.user_id, name: `${p.username}（编号:${p.user_id}）` }),
           (p.pinned ? " · 置顶" : "") + " · 回复 " + p.reply_count + " · 赞 " + p.like_count + " · 有用 " + p.useful_count
         ),
         React.createElement("div", { className: "right" },
@@ -365,7 +365,7 @@ function PostDetail({ id, go, me }) {
         React.createElement(Badge, { badge: data.post.badge })
       ),
       React.createElement("div", { className: "post-meta muted mini" },
-        React.createElement(AuthorLink, { id: data.post.user_id, name: `${data.post.username} (ID:${data.post.user_id})` }),
+        React.createElement(AuthorLink, { id: data.post.user_id, name: `${data.post.username}（编号:${data.post.user_id}）` }),
         data.post.pinned ? " · 置顶" : ""
       ),
       editing
@@ -410,7 +410,7 @@ function PostDetail({ id, go, me }) {
       const canDeleteReply = me && (me.id === r.user_id || me.is_admin || me.is_superadmin);
       return React.createElement("div", { key: r.id, className: "card" },
       React.createElement("div", { className: "post-meta" },
-        React.createElement(AuthorLink, { id: r.user_id, name: `${r.username} (ID:${r.user_id})` }),
+        React.createElement(AuthorLink, { id: r.user_id, name: `${r.username}（编号:${r.user_id}）` }),
         React.createElement(Badge, { badge: r.badge })
       ),
       React.createElement(Markdown, { content: r.content_md }),
@@ -518,7 +518,7 @@ function UserProfile({ id }) {
         ? React.createElement("div", { className: "muted mini" }, "暂无")
         : React.createElement("div", { className: "list" },
             following.map((u) => React.createElement("div", { key: u.id, className: "card" },
-              React.createElement(AuthorLink, { id: u.id, name: `${u.username} (ID:${u.id})` }),
+              React.createElement(AuthorLink, { id: u.id, name: `${u.username}（编号:${u.id}）` }),
               React.createElement(Badge, { badge: u.badge })
             ))
           ),
@@ -527,7 +527,7 @@ function UserProfile({ id }) {
         ? React.createElement("div", { className: "muted mini" }, "暂无")
         : React.createElement("div", { className: "list" },
             followers.map((u) => React.createElement("div", { key: u.id, className: "card" },
-              React.createElement(AuthorLink, { id: u.id, name: `${u.username} (ID:${u.id})` }),
+              React.createElement(AuthorLink, { id: u.id, name: `${u.username}（编号:${u.id}）` }),
               React.createElement(Badge, { badge: u.badge })
             ))
           ),
@@ -541,7 +541,7 @@ function UserProfile({ id }) {
                 React.createElement(Badge, { badge: p.badge })
               ),
               React.createElement("div", { className: "post-meta muted mini" },
-                React.createElement(AuthorLink, { id: p.user_id, name: `${p.username} (ID:${p.user_id})` }),
+                React.createElement(AuthorLink, { id: p.user_id, name: `${p.username}（编号:${p.user_id}）` }),
                 (p.pinned ? " · 置顶" : "") + " · 回复 " + p.reply_count + " · 赞 " + p.like_count + " · 有用 " + p.useful_count
               ),
               React.createElement("div", { className: "right" },
@@ -582,7 +582,7 @@ function Messages() {
       list.map((m) => React.createElement("div", { key: m.id, className: "card" },
         React.createElement("div", { className: "muted mini" },
           "来自 ",
-          React.createElement(AuthorLink, { id: m.from_id, name: `${m.from_name} (ID:${m.from_id})` })
+          React.createElement(AuthorLink, { id: m.from_id, name: `${m.from_name}（编号:${m.from_id}）` })
         ),
         React.createElement(Markdown, { content: m.content_md }),
         React.createElement("div", { className: "row" },
@@ -681,10 +681,10 @@ function Tickets() {
           React.createElement("span", { className: "muted mini" }, t.status)
         ),
         React.createElement("div", { className: "muted mini" },
-          "工单ID: " + t.id + " · 作者 ",
+          "工单编号: " + t.id + " · 作者 ",
           t.username
-            ? React.createElement(AuthorLink, { id: t.user_id, name: `${t.username} (ID:${t.user_id})` })
-            : React.createElement(AuthorLink, { id: t.user_id, name: `ID:${t.user_id}` })
+            ? React.createElement(AuthorLink, { id: t.user_id, name: `${t.username}（编号:${t.user_id}）` })
+            : React.createElement(AuthorLink, { id: t.user_id, name: `编号:${t.user_id}` })
         ),
         React.createElement(Markdown, { content: t.content_md }),
         me && me.id === t.user_id && React.createElement("div", { className: "row" },
@@ -750,11 +750,11 @@ function Ostracism() {
         ),
         React.createElement("div", null,
           "执行人：",
-          React.createElement(AuthorLink, { id: l.actor_id, name: `${l.actor_name || "ID"} (ID:${l.actor_id})` })
+          React.createElement(AuthorLink, { id: l.actor_id, name: `${l.actor_name || "编号"}（编号:${l.actor_id}）` })
         ),
         l.target_user_id && React.createElement("div", null,
           "对象：",
-          React.createElement(AuthorLink, { id: l.target_user_id, name: `${l.target_name || "ID"} (ID:${l.target_user_id})` })
+          React.createElement(AuthorLink, { id: l.target_user_id, name: `${l.target_name || "编号"}（编号:${l.target_user_id}）` })
         ),
         l.detail && React.createElement("div", { className: "muted mini" }, l.detail)
       ))
