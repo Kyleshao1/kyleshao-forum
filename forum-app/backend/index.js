@@ -504,6 +504,18 @@ app.patch("/me", auth, async (req, res) => {
   res.json({ ok: true });
 });
 
+app.get("/users/by-username/:username", auth, async (req, res) => {
+  const username = (req.params.username || "").trim();
+  if (!username) return res.status(400).json({ error: "Missing username" });
+  const [rows] = await pool.query(
+    "SELECT id, username, bio, signature, vitality, is_admin, is_superadmin FROM users WHERE username=?",
+    [username]
+  );
+  const user = rows[0];
+  if (!user) return res.status(404).json({ error: "Not found" });
+  res.json(user);
+});
+
 app.get("/users/:id", auth, async (req, res) => {
   let user = await getUserById(req.params.id);
   if (!user) return res.status(404).json({ error: "Not found" });
