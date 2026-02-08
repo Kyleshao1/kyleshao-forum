@@ -5,7 +5,6 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import mysql from "mysql2/promise";
 import crypto from "crypto";
-import nodemailer from "nodemailer";
 
 dotenv.config();
 
@@ -26,35 +25,35 @@ const {
   DB_USER,
   DB_PASSWORD,
   DB_NAME,
-  SMTP_HOST,
-  SMTP_PORT = 587,
-  SMTP_USER,
-  SMTP_PASS,
-  SMTP_FROM
+  RESEND_API_KEY,
+  RESEND_FROM
 } = process.env;
 
 if (!DB_HOST || !DB_USER || !DB_PASSWORD || !DB_NAME) {
   console.warn("Missing DB env vars. Set DB_HOST, DB_USER, DB_PASSWORD, DB_NAME.");
 }
 
-const mailer = SMTP_HOST
-  ? nodemailer.createTransport({
-      host: SMTP_HOST,
-      port: Number(SMTP_PORT),
-      secure: Number(SMTP_PORT) === 465,
-      auth: SMTP_USER && SMTP_PASS ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
-      connectionTimeout: 8000,
-      greetingTimeout: 8000,
-      socketTimeout: 8000
-    })
-  : null;
-
 async function sendResetEmail(to, token) {
-  if (!mailer) return;
-  const from = SMTP_FROM || SMTP_USER || "no-reply@example.com";
+  if (!RESEND_API_KEY || !RESEND_FROM) return;
   const subject = "论坛密码重置码";
   const text = `你的重置码：${token}\n有效期 1 小时。`;
-  await mailer.sendMail({ from, to, subject, text });
+  const resp = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${RESEND_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      from: RESEND_FROM,
+      to,
+      subject,
+      text
+    })
+  });
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => "");
+    throw new Error(`Resend failed: ${resp.status} ${errText}`);
+  }
 }
 
 const pool = mysql.createPool({
@@ -402,12 +401,12 @@ app.post("/auth/forgot", async (req, res) => {
     "INSERT INTO password_reset_tokens (user_id, token, expires_at, created_at) VALUES (?,?,?,?)",
     [user.id, token, expires.toISOString().slice(0, 19).replace("T", " "), nowSql()]
   );
-  if (mailer) {
+  if (RESEND_API_KEY && RESEND_FROM) {
     sendResetEmail(user.email, token).catch((e) => {
       console.error("Reset email failed:", e?.message || e);
     });
   }
-  res.json({ ok: true, expires_at: expires.toISOString(), email_sent: !!mailer, token: mailer ? undefined : token });
+  res.json({ ok: true, expires_at: expires.toISOString(), email_sent: !!(RESEND_API_KEY && RESEND_FROM), token: (RESEND_API_KEY && RESEND_FROM) ? undefined : token });
 });
 
 app.post("/auth/reset", async (req, res) => {
