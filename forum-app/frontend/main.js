@@ -821,6 +821,16 @@ function UserByName({ username, go }) {
   return React.createElement("div", { className: "card" }, "正在跳转...");
 }
 
+function NotFound({ go }) {
+  return React.createElement("div", { className: "card" },
+    React.createElement("div", { className: "title" }, "页面未找到"),
+    React.createElement("div", { className: "muted" }, "你访问的地址不存在或已被移除。"),
+    React.createElement("div", { className: "row" },
+      React.createElement("button", { className: "btn", onClick: () => go("/") }, "返回首页")
+    )
+  );
+}
+
 function App() {
   const [route, go] = useHashRoute();
   const [authed, setAuthed] = useState(!!localStorage.getItem("token"));
@@ -868,13 +878,14 @@ function App() {
     const id = route.split("/")[2];
     return React.createElement(UserProfile, { id });
   }
+  if (route === "/" || route === "") return React.createElement(Feed, { go });
   if (route === "/new") return React.createElement(NewPost, { go });
   if (route === "/me") return React.createElement(Profile);
   if (route === "/messages") return React.createElement(Messages);
   if (route === "/tickets") return React.createElement(Tickets);
   if (route === "/ostracism") return React.createElement(Ostracism);
   if (route === "/admin") return React.createElement(AdminPanel);
-  return React.createElement(Feed, { go });
+  return React.createElement(NotFound, { go });
 }
 
 root.render(React.createElement(App));
