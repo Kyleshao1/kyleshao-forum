@@ -50,6 +50,24 @@ function AuthorLink({ id, name }) {
   return React.createElement("a", { href: `#/user/${id}` }, name);
 }
 
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function highlightText(text, keyword) {
+  const q = (keyword || "").trim();
+  if (!q) return escapeHtml(text);
+  const escaped = escapeHtml(text);
+  const safe = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(safe, "gi");
+  return escaped.replace(re, (m) => `<mark>${m}</mark>`);
+}
+
 function AuthPanel({ onAuthed }) {
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
@@ -160,7 +178,10 @@ function Feed({ go }) {
       error && React.createElement("div", { className: "card" }, error),
       posts.map((p) => React.createElement("div", { key: p.id, className: "card" },
         React.createElement("div", { className: "row" },
-          React.createElement("div", { className: "title" }, p.title),
+          React.createElement("div", {
+            className: "title",
+            dangerouslySetInnerHTML: { __html: highlightText(p.title, query) }
+          }),
           React.createElement(Badge, { badge: p.badge })
         ),
         React.createElement("div", { className: "post-meta muted mini" },
@@ -588,7 +609,9 @@ function Tickets() {
       ),
       list.map((t) => React.createElement("div", { key: t.id, className: "card" },
         React.createElement("div", { className: "row" },
-          React.createElement("strong", null, t.title),
+          React.createElement("strong", {
+            dangerouslySetInnerHTML: { __html: highlightText(t.title, query) }
+          }),
           React.createElement("span", { className: "muted mini" }, t.status)
         ),
         React.createElement("div", { className: "muted mini" },
