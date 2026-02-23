@@ -2,7 +2,7 @@
   base = "."
   command = "echo \"no build\""
   publish = "frontend"
-  functions = "netlify/functions"
+  functions = "forum-app/netlify/functions"
 
 [functions]
   node_bundler = "esbuild"
