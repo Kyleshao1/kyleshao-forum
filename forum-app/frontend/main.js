@@ -204,12 +204,15 @@ function Feed({ go, me }) {
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [boardName, setBoardName] = useState("");
+  const [boardFilter, setBoardFilter] = useState("");
   const { boards, reload: reloadBoards } = useBoards();
 
-  const load = async () => {
+  const load = async (opts = {}) => {
     try {
       setError("");
-      const data = await apiFetch("/posts");
+      const boardId = opts.boardId ?? boardFilter;
+      const qs = boardId ? `?board_id=${encodeURIComponent(boardId)}` : "";
+      const data = await apiFetch(`/posts${qs}`);
       setPosts(data);
     } catch (e) {
       setError(e.message);
@@ -227,7 +230,7 @@ function Feed({ go, me }) {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [boardFilter]);
 
   const createBoard = async () => {
     const name = boardName.trim();
@@ -291,10 +294,11 @@ function Feed({ go, me }) {
         React.createElement("div", { className: "list" },
           React.createElement("input", { placeholder: "新板块名称", value: boardName, onChange: (e) => setBoardName(e.target.value) }),
           React.createElement("button", { className: "btn", onClick: createBoard }, "创建板块"),
+          React.createElement("button", { className: "btn ghost", onClick: () => setBoardFilter("") }, "全部板块"),
           boards.length === 0
             ? React.createElement("div", { className: "muted mini" }, "暂无板块")
             : boards.map((b) => React.createElement("div", { key: b.id, className: "row" },
-                React.createElement("div", null, b.name),
+                React.createElement("button", { className: "btn ghost", onClick: () => setBoardFilter(String(b.id)) }, b.name),
                 me && (me.is_admin || me.is_superadmin) && React.createElement("button", { className: "btn ghost", onClick: () => deleteBoard(b.id) }, "删除")
               ))
         )
