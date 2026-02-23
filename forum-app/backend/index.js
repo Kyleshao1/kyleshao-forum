@@ -322,6 +322,12 @@ async function ensureTables() {
   }
 }
 
+let initPromise = null;
+async function ensureInit() {
+  if (!initPromise) initPromise = ensureTables();
+  return initPromise;
+}
+
 function signToken(user) {
   return jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: "7d" });
 }
@@ -1283,7 +1289,11 @@ app.post("/admin/delete-account", auth, requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
-app.listen(PORT, async () => {
-  await ensureTables();
-  console.log(`API running on ${PORT}`);
-});
+if (!process.env.NETLIFY) {
+  app.listen(PORT, async () => {
+    await ensureInit();
+    console.log(`API running on ${PORT}`);
+  });
+}
+
+export { app, ensureInit };
