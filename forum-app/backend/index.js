@@ -147,9 +147,18 @@ async function ensureTables() {
       )
     `);
     await conn.query(`
+      CREATE TABLE IF NOT EXISTS boards (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        name VARCHAR(64) UNIQUE NOT NULL,
+        created_by BIGINT,
+        created_at DATETIME NOT NULL
+      )
+    `);
+    await conn.query(`
       CREATE TABLE IF NOT EXISTS posts (
         id BIGINT PRIMARY KEY AUTO_INCREMENT,
         user_id BIGINT NOT NULL,
+        board_id BIGINT,
         title VARCHAR(200) NOT NULL,
         content_md TEXT NOT NULL,
         created_at DATETIME NOT NULL,
@@ -165,6 +174,9 @@ async function ensureTables() {
     `);
     try {
       await conn.query("ALTER TABLE posts ADD COLUMN IF NOT EXISTS pinned TINYINT NOT NULL DEFAULT 0");
+    } catch {}
+    try {
+      await conn.query("ALTER TABLE posts ADD COLUMN IF NOT EXISTS board_id BIGINT");
     } catch {}
     await conn.query(`
       CREATE TABLE IF NOT EXISTS replies (
@@ -294,6 +306,17 @@ async function ensureTables() {
         UNIQUE KEY uniq_token (token)
       )
     `);
+
+    const [boardRows] = await conn.query("SELECT id FROM boards WHERE name=? LIMIT 1", ["站务板"]);
+    let defaultBoardId = boardRows[0]?.id;
+    if (!defaultBoardId) {
+      const [result] = await conn.query(
+        "INSERT INTO boards (name, created_by, created_at) VALUES (?,?,?)",
+        ["站务板", null, nowSql()]
+      );
+      defaultBoardId = result.insertId;
+    }
+    await conn.query("UPDATE posts SET board_id=? WHERE board_id IS NULL", [defaultBoardId]);
   } finally {
     conn.release();
   }
@@ -305,6 +328,21 @@ function signToken(user) {
 
 async function getUserById(id) {
   const [rows] = await pool.query("SELECT * FROM users WHERE id=?", [id]);
+  return rows[0];
+}
+
+async function getDefaultBoardId() {
+  const [rows] = await pool.query("SELECT id FROM boards WHERE name=? LIMIT 1", ["站务板"]);
+  if (rows[0]) return rows[0].id;
+  const [result] = await pool.query(
+    "INSERT INTO boards (name, created_by, created_at) VALUES (?,?,?)",
+    ["站务板", null, nowSql()]
+  );
+  return result.insertId;
+}
+
+async function getBoardById(id) {
+  const [rows] = await pool.query("SELECT * FROM boards WHERE id=?", [id]);
   return rows[0];
 }
 
@@ -571,7 +609,7 @@ app.get("/users/:id/following", auth, async (req, res) => {
 
 app.get("/users/:id/posts", auth, async (req, res) => {
   const [rows] = await pool.query(
-    "SELECT p.*, u.username, u.is_admin, u.is_superadmin, u.vitality FROM posts p JOIN users u ON p.user_id=u.id WHERE p.user_id=? AND p.deleted=0 ORDER BY p.created_at DESC LIMIT 200",
+    "SELECT p.*, u.username, u.is_admin, u.is_superadmin, u.vitality, b.name AS board_name FROM posts p JOIN users u ON p.user_id=u.id LEFT JOIN boards b ON p.board_id=b.id WHERE p.user_id=? AND p.deleted=0 ORDER BY p.created_at DESC LIMIT 200",
     [req.params.id]
   );
   const mapped = rows.map((r) => ({
@@ -581,15 +619,57 @@ app.get("/users/:id/posts", auth, async (req, res) => {
   res.json(mapped);
 });
 
+app.get("/boards", auth, async (req, res) => {
+  const [rows] = await pool.query(
+    "SELECT id, name, created_by, created_at FROM boards ORDER BY created_at DESC, id DESC"
+  );
+  res.json(rows);
+});
+
+app.post("/boards", auth, async (req, res) => {
+  const { name } = req.body || {};
+  const trimmed = (name || "").trim();
+  if (!trimmed) return res.status(400).json({ error: "Missing name" });
+  if (trimmed.length < 2 || trimmed.length > 32) return res.status(400).json({ error: "Invalid name" });
+  try {
+    const [result] = await pool.query(
+      "INSERT INTO boards (name, created_by, created_at) VALUES (?,?,?)",
+      [trimmed, req.userId, nowSql()]
+    );
+    res.json({ id: result.insertId });
+  } catch (e) {
+    res.status(400).json({ error: "Board already exists" });
+  }
+});
+
+app.delete("/boards/:id", auth, requireAdmin, async (req, res) => {
+  const boardId = Number(req.params.id);
+  if (!boardId) return res.status(400).json({ error: "Invalid board" });
+  const board = await getBoardById(boardId);
+  if (!board) return res.status(404).json({ error: "Not found" });
+  const defaultBoardId = await getDefaultBoardId();
+  if (boardId === defaultBoardId) return res.status(400).json({ error: "Cannot delete default" });
+  await pool.query("UPDATE posts SET board_id=? WHERE board_id=?", [defaultBoardId, boardId]);
+  await pool.query("DELETE FROM boards WHERE id=?", [boardId]);
+  res.json({ ok: true });
+});
+
 app.post("/posts", auth, async (req, res) => {
-  const { title, content_md } = req.body || {};
+  const { title, content_md, board_id } = req.body || {};
   if (!title || !content_md) return res.status(400).json({ error: "Missing fields" });
   const user = await getUserById(req.userId);
   if (user.banned) return res.status(403).json({ error: "Banned" });
   const created_at = nowSql();
+  let boardId = board_id ? Number(board_id) : null;
+  if (!boardId) {
+    boardId = await getDefaultBoardId();
+  } else {
+    const board = await getBoardById(boardId);
+    if (!board) return res.status(400).json({ error: "Invalid board" });
+  }
   const [result] = await pool.query(
-    "INSERT INTO posts (user_id,title,content_md,created_at,updated_at) VALUES (?,?,?,?,?)",
-    [req.userId, title, content_md, created_at, created_at]
+    "INSERT INTO posts (user_id,board_id,title,content_md,created_at,updated_at) VALUES (?,?,?,?,?,?)",
+    [req.userId, boardId, title, content_md, created_at, created_at]
   );
   await addVitality(req.userId, 2);
   sendMentionMessages({
@@ -605,7 +685,7 @@ app.post("/posts", auth, async (req, res) => {
 
 app.get("/posts", auth, async (req, res) => {
   const [rows] = await pool.query(
-    "SELECT p.*, u.username, u.is_admin, u.is_superadmin, u.vitality FROM posts p JOIN users u ON p.user_id=u.id WHERE p.deleted=0 ORDER BY p.pinned DESC, p.created_at DESC LIMIT 200"
+    "SELECT p.*, u.username, u.is_admin, u.is_superadmin, u.vitality, b.name AS board_name FROM posts p JOIN users u ON p.user_id=u.id LEFT JOIN boards b ON p.board_id=b.id WHERE p.deleted=0 ORDER BY p.pinned DESC, p.created_at DESC LIMIT 200"
   );
   const mapped = rows.map((r) => {
     const badge = badgeFromVitality(r.is_admin || r.is_superadmin ? 9999 : r.vitality, r.is_admin || r.is_superadmin);
@@ -622,7 +702,7 @@ app.get("/posts/search", auth, async (req, res) => {
   if (!q) return res.json([]);
   const like = `%${q}%`;
   const [rows] = await pool.query(
-    "SELECT p.*, u.username, u.is_admin, u.is_superadmin, u.vitality FROM posts p JOIN users u ON p.user_id=u.id WHERE p.deleted=0 AND (p.title LIKE ? OR p.content_md LIKE ?) ORDER BY p.pinned DESC, p.created_at DESC LIMIT 200",
+    "SELECT p.*, u.username, u.is_admin, u.is_superadmin, u.vitality, b.name AS board_name FROM posts p JOIN users u ON p.user_id=u.id LEFT JOIN boards b ON p.board_id=b.id WHERE p.deleted=0 AND (p.title LIKE ? OR p.content_md LIKE ?) ORDER BY p.pinned DESC, p.created_at DESC LIMIT 200",
     [like, like]
   );
   const mapped = rows.map((r) => ({
@@ -634,7 +714,7 @@ app.get("/posts/search", auth, async (req, res) => {
 
 app.get("/posts/:id", auth, async (req, res) => {
   const [posts] = await pool.query(
-    "SELECT p.*, u.username, u.is_admin, u.is_superadmin, u.vitality FROM posts p JOIN users u ON p.user_id=u.id WHERE p.id=?",
+    "SELECT p.*, u.username, u.is_admin, u.is_superadmin, u.vitality, b.name AS board_name FROM posts p JOIN users u ON p.user_id=u.id LEFT JOIN boards b ON p.board_id=b.id WHERE p.id=?",
     [req.params.id]
   );
   if (!posts[0] || posts[0].deleted) return res.status(404).json({ error: "Not found" });
@@ -669,7 +749,7 @@ app.post("/posts/:id/pin", auth, requireAdmin, async (req, res) => {
 
 app.patch("/posts/:id", auth, async (req, res) => {
   const postId = Number(req.params.id);
-  const { title, content_md } = req.body || {};
+  const { title, content_md, board_id } = req.body || {};
   if (!title || !content_md) return res.status(400).json({ error: "Missing fields" });
   const user = await getUserById(req.userId);
   const [rows] = await pool.query("SELECT * FROM posts WHERE id=?", [postId]);
@@ -678,9 +758,18 @@ app.patch("/posts/:id", auth, async (req, res) => {
   const isOwner = post.user_id === req.userId;
   const isAdmin = user.is_admin || user.is_superadmin;
   if (!isOwner && !isAdmin) return res.status(403).json({ error: "Forbidden" });
-  await pool.query("UPDATE posts SET title=?, content_md=?, updated_at=? WHERE id=?", [
+  let boardId = post.board_id;
+  if (board_id !== undefined) {
+    const parsed = Number(board_id);
+    if (!parsed) return res.status(400).json({ error: "Invalid board" });
+    const board = await getBoardById(parsed);
+    if (!board) return res.status(400).json({ error: "Invalid board" });
+    boardId = parsed;
+  }
+  await pool.query("UPDATE posts SET title=?, content_md=?, board_id=?, updated_at=? WHERE id=?", [
     title,
     content_md,
+    boardId,
     nowSql(),
     postId
   ]);
