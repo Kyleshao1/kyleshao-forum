@@ -2,10 +2,13 @@
   base = "."
   command = "echo \"no build\""
   publish = "frontend"
-  functions = "forum-app/netlify/functions"
+  functions = "netlify/functions"
 
 [functions]
   node_bundler = "esbuild"
+
+[[plugins]]
+  package = "@netlify/plugin-functions-install-core"
 
 [[redirects]]
   from = "/api/*"
