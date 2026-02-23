@@ -684,8 +684,21 @@ app.post("/posts", auth, async (req, res) => {
 });
 
 app.get("/posts", auth, async (req, res) => {
+  const boardId = req.query.board_id ? Number(req.query.board_id) : null;
+  const params = [];
+  let where = "p.deleted=0";
+  if (boardId) {
+    where += " AND p.board_id=?";
+    params.push(boardId);
+  }
   const [rows] = await pool.query(
-    "SELECT p.*, u.username, u.is_admin, u.is_superadmin, u.vitality, b.name AS board_name FROM posts p JOIN users u ON p.user_id=u.id LEFT JOIN boards b ON p.board_id=b.id WHERE p.deleted=0 ORDER BY p.pinned DESC, p.created_at DESC LIMIT 200"
+    `SELECT p.*, u.username, u.is_admin, u.is_superadmin, u.vitality, b.name AS board_name
+     FROM posts p JOIN users u ON p.user_id=u.id
+     LEFT JOIN boards b ON p.board_id=b.id
+     WHERE ${where}
+     ORDER BY p.pinned DESC, p.created_at DESC
+     LIMIT 200`,
+    params
   );
   const mapped = rows.map((r) => {
     const badge = badgeFromVitality(r.is_admin || r.is_superadmin ? 9999 : r.vitality, r.is_admin || r.is_superadmin);
