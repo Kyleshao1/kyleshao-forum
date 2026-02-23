@@ -104,6 +104,20 @@ function linkifyMentions(html) {
   }).join("");
 }
 
+function useBoards() {
+  const [boards, setBoards] = useState([]);
+  const load = async () => {
+    try {
+      const data = await apiFetch("/boards");
+      setBoards(data);
+    } catch (e) {
+      setBoards([]);
+    }
+  };
+  useEffect(() => { load(); }, []);
+  return { boards, reload: load };
+}
+
 function AuthPanel({ onAuthed }) {
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
@@ -185,10 +199,12 @@ function AuthPanel({ onAuthed }) {
   );
 }
 
-function Feed({ go }) {
+function Feed({ go, me }) {
   const [posts, setPosts] = useState([]);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
+  const [boardName, setBoardName] = useState("");
+  const { boards, reload: reloadBoards } = useBoards();
 
   const load = async () => {
     try {
@@ -213,6 +229,20 @@ function Feed({ go }) {
 
   useEffect(() => { load(); }, []);
 
+  const createBoard = async () => {
+    const name = boardName.trim();
+    if (!name) return;
+    await apiFetch("/boards", { method: "POST", body: JSON.stringify({ name }) });
+    setBoardName("");
+    reloadBoards();
+  };
+
+  const deleteBoard = async (id) => {
+    await apiFetch(`/boards/${id}`, { method: "DELETE" });
+    reloadBoards();
+    load();
+  };
+
   return React.createElement("div", { className: "grid" },
     React.createElement("div", { className: "list" },
       error && React.createElement("div", { className: "card" }, error),
@@ -226,7 +256,7 @@ function Feed({ go }) {
         ),
         React.createElement("div", { className: "post-meta muted mini" },
           React.createElement(AuthorLink, { id: p.user_id, name: `${p.username}（编号:${p.user_id}）` }),
-          (p.pinned ? " · 置顶" : "") + " · 回复 " + p.reply_count + " · 赞 " + p.like_count + " · 有用 " + p.useful_count
+          (p.pinned ? " · 置顶" : "") + (p.board_name ? ` · 板块 ${p.board_name}` : "") + " · 回复 " + p.reply_count + " · 赞 " + p.like_count + " · 有用 " + p.useful_count
         ),
         React.createElement("div", { className: "right" },
           React.createElement("button", { className: "btn ghost", onClick: () => go(`/post/${p.id}`) }, "查看")
@@ -255,6 +285,19 @@ function Feed({ go }) {
         React.createElement("div", { className: "title" }, "API 地址"),
         React.createElement("div", { className: "muted mini" }, "当前：" + API_DEFAULT),
         React.createElement("div", { className: "muted mini" }, "此地址仅由站点发布者设置。")
+      ),
+      React.createElement("div", { className: "card" },
+        React.createElement("div", { className: "title" }, "板块"),
+        React.createElement("div", { className: "list" },
+          React.createElement("input", { placeholder: "新板块名称", value: boardName, onChange: (e) => setBoardName(e.target.value) }),
+          React.createElement("button", { className: "btn", onClick: createBoard }, "创建板块"),
+          boards.length === 0
+            ? React.createElement("div", { className: "muted mini" }, "暂无板块")
+            : boards.map((b) => React.createElement("div", { key: b.id, className: "row" },
+                React.createElement("div", null, b.name),
+                me && (me.is_admin || me.is_superadmin) && React.createElement("button", { className: "btn ghost", onClick: () => deleteBoard(b.id) }, "删除")
+              ))
+        )
       )
     )
   );
@@ -265,10 +308,20 @@ function NewPost({ go }) {
   const [content, setContent] = useState("");
   const [error, setError] = useState("");
   const [preview, setPreview] = useState(false);
+  const [boardId, setBoardId] = useState("");
+  const { boards } = useBoards();
+
+  useEffect(() => {
+    if (!boardId && boards.length > 0) {
+      const def = boards.find((b) => b.name === "站务板") || boards[0];
+      setBoardId(String(def.id));
+    }
+  }, [boards, boardId]);
 
   const submit = async () => {
     try {
-      const data = await apiFetch("/posts", { method: "POST", body: JSON.stringify({ title, content_md: content }) });
+      const payload = { title, content_md: content, board_id: Number(boardId) || undefined };
+      const data = await apiFetch("/posts", { method: "POST", body: JSON.stringify(payload) });
       go(`/post/${data.id}`);
     } catch (e) {
       setError(e.message);
@@ -279,6 +332,9 @@ function NewPost({ go }) {
     React.createElement("div", { className: "title" }, "发布新帖"),
     React.createElement("div", { className: "list" },
       React.createElement("input", { placeholder: "标题", value: title, onChange: (e) => setTitle(e.target.value) }),
+      React.createElement("select", { value: boardId, onChange: (e) => setBoardId(e.target.value) },
+        boards.map((b) => React.createElement("option", { key: b.id, value: b.id }, b.name))
+      ),
       React.createElement("textarea", { placeholder: "支持 Markdown 与 LaTeX：例如 $E=mc^2$", value: content, onChange: (e) => setContent(e.target.value) }),
       React.createElement("div", { className: "row" },
         React.createElement("button", { className: "btn ghost", onClick: () => setPreview(!preview) }, preview ? "关闭预览" : "预览")
@@ -300,8 +356,10 @@ function PostDetail({ id, go, me }) {
   const [editing, setEditing] = useState(false);
   const [editTitle, setEditTitle] = useState("");
   const [editContent, setEditContent] = useState("");
+  const [editBoardId, setEditBoardId] = useState("");
   const [editPreview, setEditPreview] = useState(false);
   const [replyPreview, setReplyPreview] = useState(false);
+  const { boards } = useBoards();
 
   const load = async () => {
     try {
@@ -319,6 +377,7 @@ function PostDetail({ id, go, me }) {
     if (data) {
       setEditTitle(data.post.title);
       setEditContent(data.post.content_md);
+      setEditBoardId(String(data.post.board_id || ""));
     }
   }, [data]);
 
@@ -344,7 +403,7 @@ function PostDetail({ id, go, me }) {
   };
 
   const saveEdit = async () => {
-    await apiFetch(`/posts/${id}`, { method: "PATCH", body: JSON.stringify({ title: editTitle, content_md: editContent }) });
+    await apiFetch(`/posts/${id}`, { method: "PATCH", body: JSON.stringify({ title: editTitle, content_md: editContent, board_id: Number(editBoardId) || undefined }) });
     setEditing(false);
     load();
   };
@@ -366,11 +425,14 @@ function PostDetail({ id, go, me }) {
       ),
       React.createElement("div", { className: "post-meta muted mini" },
         React.createElement(AuthorLink, { id: data.post.user_id, name: `${data.post.username}（编号:${data.post.user_id}）` }),
-        data.post.pinned ? " · 置顶" : ""
+        (data.post.pinned ? " · 置顶" : "") + (data.post.board_name ? ` · 板块 ${data.post.board_name}` : "")
       ),
       editing
         ? React.createElement("div", { className: "list" },
             React.createElement("input", { value: editTitle, onChange: (e) => setEditTitle(e.target.value) }),
+            React.createElement("select", { value: editBoardId, onChange: (e) => setEditBoardId(e.target.value) },
+              boards.map((b) => React.createElement("option", { key: b.id, value: b.id }, b.name))
+            ),
             React.createElement("textarea", { value: editContent, onChange: (e) => setEditContent(e.target.value) }),
             React.createElement("div", { className: "row" },
               React.createElement("button", { className: "btn ghost", onClick: () => setEditPreview(!editPreview) }, editPreview ? "关闭预览" : "预览"),
@@ -542,7 +604,7 @@ function UserProfile({ id }) {
               ),
               React.createElement("div", { className: "post-meta muted mini" },
                 React.createElement(AuthorLink, { id: p.user_id, name: `${p.username}（编号:${p.user_id}）` }),
-                (p.pinned ? " · 置顶" : "") + " · 回复 " + p.reply_count + " · 赞 " + p.like_count + " · 有用 " + p.useful_count
+                (p.pinned ? " · 置顶" : "") + (p.board_name ? ` · 板块 ${p.board_name}` : "") + " · 回复 " + p.reply_count + " · 赞 " + p.like_count + " · 有用 " + p.useful_count
               ),
               React.createElement("div", { className: "right" },
                 React.createElement("button", { className: "btn ghost", onClick: () => (location.hash = `#/post/${p.id}`) }, "查看")
@@ -878,7 +940,7 @@ function App() {
     const id = route.split("/")[2];
     return React.createElement(UserProfile, { id });
   }
-  if (route === "/" || route === "") return React.createElement(Feed, { go });
+  if (route === "/" || route === "") return React.createElement(Feed, { go, me });
   if (route === "/new") return React.createElement(NewPost, { go });
   if (route === "/me") return React.createElement(Profile);
   if (route === "/messages") return React.createElement(Messages);
