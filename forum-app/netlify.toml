@@ -1,4 +1,6 @@
 [build]
+  base = "."
+  command = "echo \"no build\""
   publish = "frontend"
   functions = "netlify/functions"
 
