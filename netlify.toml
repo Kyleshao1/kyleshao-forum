@@ -1,5 +1,5 @@
 [build]
-  command = "echo \"no build\""
+  command = "cd forum-app/netlify/functions && npm install"
   publish = "forum-app/frontend"
   functions = "forum-app/netlify/functions"
 
