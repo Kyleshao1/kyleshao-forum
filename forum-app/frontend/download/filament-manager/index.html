@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>耗材管理系统 - 下载</title>
+    <style>
+      :root {
+        --bg: #0f172a;
+        --card: #111827;
+        --ink: #e5e7eb;
+        --muted: #94a3b8;
+        --accent: #22d3ee;
+        --accent-2: #38bdf8;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Space Grotesk", "Noto Sans SC", sans-serif;
+        color: var(--ink);
+        background: radial-gradient(900px 600px at 10% 0%, rgba(34,211,238,0.18), transparent),
+                    radial-gradient(900px 600px at 100% 10%, rgba(56,189,248,0.18), transparent),
+                    var(--bg);
+      }
+      .wrap {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 56px 24px;
+      }
+      .card {
+        background: linear-gradient(160deg, rgba(17,24,39,0.95), rgba(2,6,23,0.95));
+        border: 1px solid rgba(148,163,184,0.2);
+        border-radius: 18px;
+        padding: 28px;
+        box-shadow: 0 20px 40px rgba(0,0,0,0.35);
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+        letter-spacing: 0.4px;
+      }
+      p { margin: 10px 0; color: var(--muted); }
+      .meta { font-size: 14px; color: var(--muted); }
+      .btn {
+        display: inline-block;
+        margin-top: 18px;
+        padding: 12px 18px;
+        border-radius: 12px;
+        background: linear-gradient(120deg, var(--accent), var(--accent-2));
+        color: #04131f;
+        font-weight: 700;
+        text-decoration: none;
+      }
+      .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+      .pill {
+        border: 1px solid rgba(148,163,184,0.25);
+        padding: 6px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .hint { font-size: 12px; color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <div class="row">
+          <h1>耗材管理系统</h1>
+          <span class="pill">macOS</span>
+          <span class="pill">DMG</span>
+        </div>
+        <p>用于耗材登记、出入库与库存追踪的轻量工具。</p>
+        <div class="meta">下载地址：耗材管理系统.dmg</div>
+        <a class="btn" href="https://github.com/Kyleshao1/3D-filament-manager/releases/download/V2.1.2/default.dmg" download>立即下载（MacM系列芯片版）</a>
+        <div class="hint">如果浏览器未自动下载，请右键另存为。</div>
+      </div>
+    </div>
+  </body>
+</html>
