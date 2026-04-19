@@ -25,8 +25,16 @@ const {
   DB_USER,
   DB_PASSWORD,
   DB_NAME,
+  MINIMAX_API_KEY,
+  MINIMAX_GROUP_ID,
+  MINIMAX_MODEL = "abab6.5-chat",
+  MINIMAX_API_URL,
   RESEND_API_KEY,
-  RESEND_FROM
+  RESEND_FROM,
+  KYLEDEV_OAUTH_ISSUER,
+  KYLEDEV_CLIENT_ID,
+  KYLEDEV_CLIENT_SECRET,
+  KYLEDEV_REDIRECT_URI
 } = process.env;
 
 if (!DB_HOST || !DB_USER || !DB_PASSWORD || !DB_NAME) {
@@ -161,6 +169,8 @@ async function ensureTables() {
         board_id BIGINT,
         title VARCHAR(200) NOT NULL,
         content_md TEXT NOT NULL,
+        is_protected TINYINT NOT NULL DEFAULT 0,
+        pass_hash VARCHAR(255),
         created_at DATETIME NOT NULL,
         updated_at DATETIME NOT NULL,
         deleted TINYINT NOT NULL DEFAULT 0,
@@ -177,6 +187,12 @@ async function ensureTables() {
     } catch {}
     try {
       await conn.query("ALTER TABLE posts ADD COLUMN IF NOT EXISTS board_id BIGINT");
+    } catch {}
+    try {
+      await conn.query("ALTER TABLE posts ADD COLUMN IF NOT EXISTS is_protected TINYINT NOT NULL DEFAULT 0");
+    } catch {}
+    try {
+      await conn.query("ALTER TABLE posts ADD COLUMN IF NOT EXISTS pass_hash VARCHAR(255)");
     } catch {}
     await conn.query(`
       CREATE TABLE IF NOT EXISTS replies (
@@ -446,6 +462,88 @@ app.get("/health", async (req, res) => {
   res.json({ ok: true });
 });
 
+function buildMinimaxUrl() {
+  const base = (MINIMAX_API_URL || "https://api.minimax.chat/v1/text/chatcompletion_v2").trim();
+  if (!MINIMAX_GROUP_ID) return base;
+  if (/(\?|&)GroupId=/.test(base)) return base;
+  const sep = base.includes("?") ? "&" : "?";
+  return `${base}${sep}GroupId=${encodeURIComponent(MINIMAX_GROUP_ID)}`;
+}
+
+function extractMinimaxMarkdown(data) {
+  const candidates = [
+    data?.choices?.[0]?.message?.content,
+    data?.choices?.[0]?.text,
+    data?.reply,
+    data?.output_text,
+    data?.result?.choices?.[0]?.message?.content
+  ];
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim()) return c.trim();
+  }
+  return "";
+}
+
+app.post("/ai/minimax", auth, async (req, res) => {
+  try {
+    if (!MINIMAX_API_KEY) {
+      return res.status(501).json({ error: "Minimax 未配置：请设置 MINIMAX_API_KEY" });
+    }
+
+    const { question, title, content_md } = req.body || {};
+    const q = String(question || "").trim();
+    if (!q) return res.status(400).json({ error: "Missing question" });
+    if (q.length > 2000) return res.status(400).json({ error: "Question too long" });
+    const t = String(title || "").trim();
+    const c = String(content_md || "").trim();
+    if (t.length > 200) return res.status(400).json({ error: "Title too long" });
+    if (c.length > 20000) return res.status(400).json({ error: "Content too long" });
+
+    const system = [
+      "你是论坛发帖助手。",
+      "你只输出 Markdown 内容（不要输出代码围栏，不要输出额外解释）。",
+      "如果需要结构化内容，优先用小标题、列表与引用块。"
+    ].join("\n");
+
+    const user = [
+      `用户诉求：${q}`,
+      t ? `\n当前标题：${t}` : "",
+      c ? `\n当前草稿（Markdown）：\n${c}` : "",
+      "\n请直接给出可用于发帖的 Markdown 正文。"
+    ].join("\n");
+
+    const url = buildMinimaxUrl();
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${MINIMAX_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: MINIMAX_MODEL,
+        stream: false,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user }
+        ]
+      })
+    });
+
+    const text = await resp.text();
+    if (!resp.ok) {
+      return res.status(502).json({ error: `Minimax 调用失败：${resp.status}`, detail: text.slice(0, 1000) });
+    }
+    const data = JSON.parse(text || "{}");
+    const markdown = extractMinimaxMarkdown(data);
+    if (!markdown) {
+      return res.status(502).json({ error: "Minimax 返回解析失败", detail: JSON.stringify(data).slice(0, 1000) });
+    }
+    res.json({ markdown });
+  } catch (e) {
+    res.status(500).json({ error: e.message || "AI error" });
+  }
+});
+
 app.post("/auth/register", async (req, res) => {
   const { email, username, password } = req.body || {};
   if (!email || !username || !password) return res.status(400).json({ error: "Missing fields" });
@@ -481,6 +579,68 @@ app.post("/auth/login", async (req, res) => {
   if (user.banned) return res.status(403).json({ error: "Account banned" });
   const token = signToken(user);
   res.json({ token });
+});
+
+app.get("/auth/kydev/callback", async (req, res) => {
+  if (!KYLEDEV_OAUTH_ISSUER || !KYLEDEV_CLIENT_ID || !KYLEDEV_CLIENT_SECRET || !KYLEDEV_REDIRECT_URI) {
+    return res.status(400).json({ error: "Kydev OAuth not configured" });
+  }
+  const code = String(req.query.code || "");
+  if (!code) return res.status(400).json({ error: "Missing code" });
+
+  const tokenResp = await fetch(`${KYLEDEV_OAUTH_ISSUER}/api/oauth-token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      grant_type: "authorization_code",
+      code,
+      client_id: KYLEDEV_CLIENT_ID,
+      client_secret: KYLEDEV_CLIENT_SECRET,
+      redirect_uri: KYLEDEV_REDIRECT_URI
+    })
+  });
+  if (!tokenResp.ok) {
+    const err = await tokenResp.text().catch(() => "");
+    return res.status(400).json({ error: `OAuth token failed: ${err}` });
+  }
+  const tokenData = await tokenResp.json();
+  const accessToken = tokenData.access_token;
+  if (!accessToken) return res.status(400).json({ error: "Missing access_token" });
+
+  const userResp = await fetch(`${KYLEDEV_OAUTH_ISSUER}/api/oauth-userinfo`, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  if (!userResp.ok) {
+    const err = await userResp.text().catch(() => "");
+    return res.status(400).json({ error: `OAuth userinfo failed: ${err}` });
+  }
+  const profile = await userResp.json();
+
+  let merged = false;
+  let [rows] = await pool.query("SELECT * FROM users WHERE username=? LIMIT 1", [profile.username]);
+  let user = rows[0];
+  if (user) {
+    merged = true;
+  } else {
+    [rows] = await pool.query("SELECT * FROM users WHERE email=? LIMIT 1", [profile.email]);
+    user = rows[0];
+  }
+
+  if (!user) {
+    const pass_hash = await bcrypt.hash(crypto.randomBytes(12).toString("hex"), 10);
+    const created_at = nowSql();
+    const [result] = await pool.query(
+      "INSERT INTO users (email, username, pass_hash, created_at, last_vitality_at) VALUES (?,?,?,?,?)",
+      [profile.email, profile.username, pass_hash, created_at, created_at]
+    );
+    user = { id: result.insertId };
+  }
+
+  const token = signToken(user);
+  const redirectUrl = new URL(`${req.protocol}://${req.get("host")}/`);
+  redirectUrl.searchParams.set("token", token);
+  if (merged) redirectUrl.searchParams.set("merge", "1");
+  return res.redirect(redirectUrl.toString());
 });
 
 app.post("/auth/forgot", async (req, res) => {
@@ -615,7 +775,14 @@ app.get("/users/:id/following", auth, async (req, res) => {
 
 app.get("/users/:id/posts", auth, async (req, res) => {
   const [rows] = await pool.query(
-    "SELECT p.*, u.username, u.is_admin, u.is_superadmin, u.vitality, b.name AS board_name FROM posts p JOIN users u ON p.user_id=u.id LEFT JOIN boards b ON p.board_id=b.id WHERE p.user_id=? AND p.deleted=0 ORDER BY p.created_at DESC LIMIT 200",
+    `SELECT p.id, p.user_id, p.board_id, p.title, p.is_protected, p.created_at, p.updated_at, p.deleted, p.pinned,
+            p.like_count, p.useful_count, p.downvote_count, p.reply_count,
+            u.username, u.is_admin, u.is_superadmin, u.vitality, b.name AS board_name
+     FROM posts p JOIN users u ON p.user_id=u.id
+     LEFT JOIN boards b ON p.board_id=b.id
+     WHERE p.user_id=? AND p.deleted=0
+     ORDER BY p.created_at DESC
+     LIMIT 200`,
     [req.params.id]
   );
   const mapped = rows.map((r) => ({
@@ -661,7 +828,7 @@ app.delete("/boards/:id", auth, requireAdmin, async (req, res) => {
 });
 
 app.post("/posts", auth, async (req, res) => {
-  const { title, content_md, board_id } = req.body || {};
+  const { title, content_md, board_id, password_enabled, password } = req.body || {};
   if (!title || !content_md) return res.status(400).json({ error: "Missing fields" });
   const user = await getUserById(req.userId);
   if (user.banned) return res.status(403).json({ error: "Banned" });
@@ -673,9 +840,20 @@ app.post("/posts", auth, async (req, res) => {
     const board = await getBoardById(boardId);
     if (!board) return res.status(400).json({ error: "Invalid board" });
   }
+
+  let isProtected = 0;
+  let passHash = null;
+  if (password_enabled) {
+    const pw = String(password || "").trim();
+    if (!pw) return res.status(400).json({ error: "Missing password" });
+    if (pw.length > 128) return res.status(400).json({ error: "Password too long" });
+    isProtected = 1;
+    passHash = await bcrypt.hash(pw, 10);
+  }
+
   const [result] = await pool.query(
-    "INSERT INTO posts (user_id,board_id,title,content_md,created_at,updated_at) VALUES (?,?,?,?,?,?)",
-    [req.userId, boardId, title, content_md, created_at, created_at]
+    "INSERT INTO posts (user_id,board_id,title,content_md,is_protected,pass_hash,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)",
+    [req.userId, boardId, title, content_md, isProtected, passHash, created_at, created_at]
   );
   await addVitality(req.userId, 2);
   sendMentionMessages({
@@ -698,7 +876,9 @@ app.get("/posts", auth, async (req, res) => {
     params.push(boardId);
   }
   const [rows] = await pool.query(
-    `SELECT p.*, u.username, u.is_admin, u.is_superadmin, u.vitality, b.name AS board_name
+    `SELECT p.id, p.user_id, p.board_id, p.title, p.is_protected, p.created_at, p.updated_at, p.deleted, p.pinned,
+            p.like_count, p.useful_count, p.downvote_count, p.reply_count,
+            u.username, u.is_admin, u.is_superadmin, u.vitality, b.name AS board_name
      FROM posts p JOIN users u ON p.user_id=u.id
      LEFT JOIN boards b ON p.board_id=b.id
      WHERE ${where}
@@ -721,7 +901,14 @@ app.get("/posts/search", auth, async (req, res) => {
   if (!q) return res.json([]);
   const like = `%${q}%`;
   const [rows] = await pool.query(
-    "SELECT p.*, u.username, u.is_admin, u.is_superadmin, u.vitality, b.name AS board_name FROM posts p JOIN users u ON p.user_id=u.id LEFT JOIN boards b ON p.board_id=b.id WHERE p.deleted=0 AND (p.title LIKE ? OR p.content_md LIKE ?) ORDER BY p.pinned DESC, p.created_at DESC LIMIT 200",
+    `SELECT p.id, p.user_id, p.board_id, p.title, p.is_protected, p.created_at, p.updated_at, p.deleted, p.pinned,
+            p.like_count, p.useful_count, p.downvote_count, p.reply_count,
+            u.username, u.is_admin, u.is_superadmin, u.vitality, b.name AS board_name
+     FROM posts p JOIN users u ON p.user_id=u.id
+     LEFT JOIN boards b ON p.board_id=b.id
+     WHERE p.deleted=0 AND (p.title LIKE ? OR p.content_md LIKE ?)
+     ORDER BY p.pinned DESC, p.created_at DESC
+     LIMIT 200`,
     [like, like]
   );
   const mapped = rows.map((r) => ({
@@ -731,6 +918,20 @@ app.get("/posts/search", auth, async (req, res) => {
   res.json(mapped);
 });
 
+async function canBypassPostPassword(reqUserId, postUserId) {
+  if (reqUserId === postUserId) return true;
+  const user = await getUserById(reqUserId);
+  return !!(user && (user.is_admin || user.is_superadmin));
+}
+
+async function verifyPostPassword(post, password) {
+  if (!post?.is_protected) return true;
+  if (!post?.pass_hash) return false;
+  const pw = String(password || "");
+  if (!pw) return false;
+  return bcrypt.compare(pw, post.pass_hash);
+}
+
 app.get("/posts/:id", auth, async (req, res) => {
   const [posts] = await pool.query(
     "SELECT p.*, u.username, u.is_admin, u.is_superadmin, u.vitality, b.name AS board_name FROM posts p JOIN users u ON p.user_id=u.id LEFT JOIN boards b ON p.board_id=b.id WHERE p.id=?",
@@ -738,16 +939,33 @@ app.get("/posts/:id", auth, async (req, res) => {
   );
   if (!posts[0] || posts[0].deleted) return res.status(404).json({ error: "Not found" });
   const post = posts[0];
-  const [replies] = await pool.query(
-    "SELECT r.*, u.username, u.is_admin, u.is_superadmin, u.vitality FROM replies r JOIN users u ON r.user_id=u.id WHERE r.post_id=? AND r.deleted=0 ORDER BY r.created_at ASC",
-    [req.params.id]
-  );
+
+  const bypass = await canBypassPostPassword(req.userId, post.user_id);
+  let unlocked = bypass || !post.is_protected;
+  if (!unlocked && post.is_protected) {
+    const pw = req.headers["x-post-password"];
+    unlocked = await verifyPostPassword(post, pw);
+  }
+
+  const [replies] = unlocked
+    ? await pool.query(
+        "SELECT r.*, u.username, u.is_admin, u.is_superadmin, u.vitality FROM replies r JOIN users u ON r.user_id=u.id WHERE r.post_id=? AND r.deleted=0 ORDER BY r.created_at ASC",
+        [req.params.id]
+      )
+    : [[]];
+
   post.badge = badgeFromVitality(post.is_admin || post.is_superadmin ? 9999 : post.vitality, post.is_admin || post.is_superadmin);
   const mappedReplies = replies.map((r) => ({
     ...r,
     badge: badgeFromVitality(r.is_admin || r.is_superadmin ? 9999 : r.vitality, r.is_admin || r.is_superadmin)
   }));
-  res.json({ post, replies: mappedReplies });
+  const safePost = { ...post };
+  delete safePost.pass_hash;
+  safePost.locked = !!(safePost.is_protected && !unlocked);
+  if (safePost.locked) {
+    safePost.content_md = "";
+  }
+  res.json({ post: safePost, replies: mappedReplies });
 });
 
 app.post("/posts/:id/pin", auth, requireAdmin, async (req, res) => {
@@ -768,7 +986,7 @@ app.post("/posts/:id/pin", auth, requireAdmin, async (req, res) => {
 
 app.patch("/posts/:id", auth, async (req, res) => {
   const postId = Number(req.params.id);
-  const { title, content_md, board_id } = req.body || {};
+  const { title, content_md, board_id, password_enabled, password } = req.body || {};
   if (!title || !content_md) return res.status(400).json({ error: "Missing fields" });
   const user = await getUserById(req.userId);
   const [rows] = await pool.query("SELECT * FROM posts WHERE id=?", [postId]);
@@ -785,13 +1003,24 @@ app.patch("/posts/:id", auth, async (req, res) => {
     if (!board) return res.status(400).json({ error: "Invalid board" });
     boardId = parsed;
   }
-  await pool.query("UPDATE posts SET title=?, content_md=?, board_id=?, updated_at=? WHERE id=?", [
-    title,
-    content_md,
-    boardId,
-    nowSql(),
-    postId
-  ]);
+
+  let setProtectionSql = "";
+  const setProtectionParams = [];
+  if (password_enabled === true) {
+    const pw = String(password || "").trim();
+    if (!pw) return res.status(400).json({ error: "Missing password" });
+    if (pw.length > 128) return res.status(400).json({ error: "Password too long" });
+    const hash = await bcrypt.hash(pw, 10);
+    setProtectionSql = ", is_protected=1, pass_hash=?";
+    setProtectionParams.push(hash);
+  } else if (password_enabled === false) {
+    setProtectionSql = ", is_protected=0, pass_hash=NULL";
+  }
+
+  await pool.query(
+    `UPDATE posts SET title=?, content_md=?, board_id=?, updated_at=?${setProtectionSql} WHERE id=?`,
+    [title, content_md, boardId, nowSql(), ...setProtectionParams, postId]
+  );
   res.json({ ok: true });
 });
 
