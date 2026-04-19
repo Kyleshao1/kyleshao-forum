@@ -6,6 +6,17 @@ const root = createRoot(rootEl);
 
 const API_DEFAULT = window.__API_BASE__ || "http://localhost:4000";
 
+const oauthParams = new URLSearchParams(window.location.search);
+const oauthToken = oauthParams.get("token");
+if (oauthToken) {
+  localStorage.setItem("token", oauthToken);
+  if (oauthParams.get("merge") === "1") {
+    alert("检测到同名账号，已自动合并。");
+  }
+  const nextUrl = window.location.pathname + window.location.hash;
+  history.replaceState(null, "", nextUrl);
+}
+
 function useHashRoute() {
   const [route, setRoute] = useState(location.hash.slice(1) || "/");
   useEffect(() => {
@@ -313,6 +324,12 @@ function NewPost({ go }) {
   const [error, setError] = useState("");
   const [preview, setPreview] = useState(false);
   const [boardId, setBoardId] = useState("");
+  const [protect, setProtect] = useState(false);
+  const [postPassword, setPostPassword] = useState("");
+  const [aiQuestion, setAiQuestion] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState("");
+  const [aiMd, setAiMd] = useState("");
   const { boards } = useBoards();
 
   useEffect(() => {
@@ -324,12 +341,47 @@ function NewPost({ go }) {
 
   const submit = async () => {
     try {
-      const payload = { title, content_md: content, board_id: Number(boardId) || undefined };
+      if (protect && !postPassword.trim()) {
+        setError("已开启密码保护，请设置访问密码。");
+        return;
+      }
+      const payload = {
+        title,
+        content_md: content,
+        board_id: Number(boardId) || undefined,
+        password_enabled: protect,
+        password: protect ? postPassword : undefined
+      };
       const data = await apiFetch("/posts", { method: "POST", body: JSON.stringify(payload) });
       go(`/post/${data.id}`);
     } catch (e) {
       setError(e.message);
     }
+  };
+
+  const askAi = async () => {
+    const q = aiQuestion.trim();
+    if (!q) return;
+    try {
+      setAiLoading(true);
+      setAiError("");
+      const data = await apiFetch("/ai/minimax", {
+        method: "POST",
+        body: JSON.stringify({ question: q, title, content_md: content })
+      });
+      setAiMd(data.markdown || "");
+    } catch (e) {
+      setAiError(e.message);
+      setAiMd("");
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const applyAi = () => {
+    if (content.trim() && !confirm("将用 AI 结果覆盖当前编辑内容，确定？")) return;
+    setContent(aiMd);
+    setAiMd("");
   };
 
   return React.createElement("div", { className: "card" },
@@ -340,6 +392,49 @@ function NewPost({ go }) {
         boards.map((b) => React.createElement("option", { key: b.id, value: b.id }, b.name))
       ),
       React.createElement("textarea", { placeholder: "支持 Markdown 与 LaTeX：例如 $E=mc^2$", value: content, onChange: (e) => setContent(e.target.value) }),
+      React.createElement("div", { className: "card" },
+        React.createElement("div", { className: "title" }, "访问密码"),
+        React.createElement("div", { className: "row" },
+          React.createElement("label", { className: "muted mini" },
+            React.createElement("input", {
+              type: "checkbox",
+              checked: protect,
+              onChange: (e) => setProtect(e.target.checked),
+              style: { width: "auto", marginRight: 8 }
+            }),
+            "开启密码保护"
+          )
+        ),
+        protect && React.createElement("input", {
+          type: "password",
+          placeholder: "设置访问密码（访问帖子时需要输入）",
+          value: postPassword,
+          onChange: (e) => setPostPassword(e.target.value)
+        })
+      ),
+      React.createElement("div", { className: "card" },
+        React.createElement("div", { className: "title" }, "AI 帮写（MiniMax）"),
+        React.createElement("div", { className: "muted mini" }, "把你的问题写给 AI，它会返回可直接发帖的 Markdown。"),
+        React.createElement("div", { className: "list" },
+          React.createElement("input", {
+            placeholder: "例如：帮我把下面内容写成一篇结构清晰的求助帖/评测帖…",
+            value: aiQuestion,
+            onChange: (e) => setAiQuestion(e.target.value)
+          }),
+          React.createElement("div", { className: "row" },
+            React.createElement("button", { className: "btn", onClick: askAi, disabled: aiLoading || !aiQuestion.trim() }, aiLoading ? "AI 生成中..." : "询问 AI")
+          ),
+          aiError && React.createElement("div", { className: "muted" }, aiError),
+          aiMd && React.createElement("div", { className: "card" },
+            React.createElement("div", { className: "muted mini" }, "AI 回复预览"),
+            React.createElement(Markdown, { content: aiMd }),
+            React.createElement("div", { className: "row" },
+              React.createElement("button", { className: "btn", onClick: applyAi }, "应用到编辑框"),
+              React.createElement("button", { className: "btn ghost", onClick: () => setAiMd("") }, "拒绝")
+            )
+          )
+        )
+      ),
       React.createElement("div", { className: "row" },
         React.createElement("button", { className: "btn ghost", onClick: () => setPreview(!preview) }, preview ? "关闭预览" : "预览")
       ),
