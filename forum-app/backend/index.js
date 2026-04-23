@@ -581,7 +581,7 @@ app.post("/auth/login", async (req, res) => {
   res.json({ token });
 });
 
-app.get("/auth/kydev/callback", async (req, res) => {
+async function kydevCallback(req, res) {
   if (!KYLEDEV_OAUTH_ISSUER || !KYLEDEV_CLIENT_ID || !KYLEDEV_CLIENT_SECRET || !KYLEDEV_REDIRECT_URI) {
     return res.status(400).json({ error: "Kydev OAuth not configured" });
   }
@@ -637,11 +637,16 @@ app.get("/auth/kydev/callback", async (req, res) => {
   }
 
   const token = signToken(user);
-  const redirectUrl = new URL(`${req.protocol}://${req.get("host")}/`);
+  const proto = (req.headers["x-forwarded-proto"] || req.protocol || "https").toString().split(",")[0].trim();
+  const redirectUrl = new URL(`${proto}://${req.get("host")}/`);
   redirectUrl.searchParams.set("token", token);
   if (merged) redirectUrl.searchParams.set("merge", "1");
   return res.redirect(redirectUrl.toString());
-});
+}
+
+// Depending on Netlify redirects/basePath, the Express app may see either path.
+app.get("/auth/kydev/callback", kydevCallback);
+app.get("/api/auth/kydev/callback", kydevCallback);
 
 app.post("/auth/forgot", async (req, res) => {
   const { email } = req.body || {};
